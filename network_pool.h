@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <thread>
 #include <mutex>
+#include <atomic>
 
 #include "uv.h"
 
@@ -340,6 +341,10 @@ namespace NETWORK_POOL
 		};
 		std::list<__pending_send> m_pendingSend;
 
+		// Tx & Rx buffer preferred.
+		std::atomic<int> m_sendBufferSize;
+		std::atomic<int> m_recvBufferSize;
+
 		// Use round robin to send message on UDP.
 		int m_udpIndex;
 
@@ -374,6 +379,15 @@ namespace NETWORK_POOL
 	public:
 		CnetworkPool(CnetworkPoolCallback& callback); // throw when fail.
 		~CnetworkPool();
+
+		// Set the system socket Tx & Rx buffer size.
+		// Set 0 means use the system default value.
+		// Note: Linux will set double the size of the original set value.
+		void setSendAndRecvBufferSize(const int sendBufferSize, const int recvBufferSize)
+		{
+			m_sendBufferSize = sendBufferSize;
+			m_recvBufferSize = recvBufferSize;
+		}
 
 		void bind(const CnetworkNode& node)
 		{

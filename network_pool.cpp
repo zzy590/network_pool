@@ -1,5 +1,4 @@
 
-#include <atomic>
 #include <cstring>
 
 #include "network_pool.h"
@@ -843,6 +842,13 @@ namespace NETWORK_POOL
 				uv_close((uv_handle_t *)tcpInfo, on_close_free_handle);
 				return;
 			}
+			// Set Tx & Rx buffer size.
+			int tmpSize = m_sendBufferSize;
+			if (tmpSize != 0)
+				uv_send_buffer_size((uv_handle_t *)tcpInfo, &tmpSize); // It's just prefer, so ignore the return.
+			tmpSize = m_recvBufferSize;
+			if (tmpSize != 0)
+				uv_recv_buffer_size((uv_handle_t *)tcpInfo, &tmpSize); // It's just prefer, so ignore the return.
 			// Report new connection.
 			m_callback.connectionStatus(node, true);
 			// Send message waiting.
@@ -906,7 +912,7 @@ namespace NETWORK_POOL
 	}
 
 	CnetworkPool::CnetworkPool(CnetworkPoolCallback& callback)
-		:m_state(initializing), m_callback(callback), m_bWantExit(false), m_udpIndex(0)
+		:m_state(initializing), m_callback(callback), m_bWantExit(false), m_sendBufferSize(0), m_recvBufferSize(0), m_udpIndex(0)
 	{
 		m_thread = new std::thread(&CnetworkPool::internalThread, this); // May throw.
 		obj_add;
