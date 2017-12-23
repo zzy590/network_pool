@@ -579,81 +579,81 @@ namespace NETWORK_POOL
 			// Async.
 			uv_close((uv_handle_t *)&pool->m_wakeup, on_close_no_free);
 			// TCP servers.
-			for (auto it = pool->m_tcpServers.begin(); it != pool->m_tcpServers.end(); ++it)
+			for (auto& server : pool->m_tcpServers)
 			{
-				if ((*it)->node != nullptr)
+				if (server->node != nullptr)
 				{
 					// Report bind down.
-					pool->m_callback.bindStatus(*(*it)->node, false);
+					pool->m_callback.bindStatus(*server->node, false);
 					// Delete node data.
-					delete (*it)->node;
-					(*it)->node = nullptr;
+					delete server->node;
+					server->node = nullptr;
 					obj_sub;
 				}
-				uv_close((uv_handle_t *)*it, on_close_free_handle);
+				uv_close((uv_handle_t *)server, on_close_free_handle);
 			}
 			pool->m_tcpServers.clear();
 			// UDP servers.
-			for (auto it = pool->m_udpServers.begin(); it != pool->m_udpServers.end(); ++it)
+			for (auto& server : pool->m_udpServers)
 			{
-				if ((*it)->node != nullptr)
+				if (server->node != nullptr)
 				{
 					// Report bind down.
-					pool->m_callback.bindStatus(*(*it)->node, false);
+					pool->m_callback.bindStatus(*server->node, false);
 					// Delete node data.
-					delete (*it)->node;
-					(*it)->node = nullptr;
+					delete server->node;
+					server->node = nullptr;
 					obj_sub;
 				}
-				uv_close((uv_handle_t *)*it, on_close_free_handle);
+				uv_close((uv_handle_t *)server, on_close_free_handle);
 			}
 			pool->m_udpServers.clear();
 			// TCP connections.
-			for (auto it = pool->m_node2stream.begin(); it != pool->m_node2stream.end(); ++it)
+			for (auto& pair : pool->m_node2stream)
 			{
-				if (it->second->node != nullptr)
+				if (pair.second->node != nullptr)
 				{
 					// Report connection down.
-					pool->m_callback.connectionStatus(*it->second->node, false);
+					pool->m_callback.connectionStatus(*pair.second->node, false);
 					// Delete node data.
-					delete it->second->node;
-					it->second->node = nullptr;
+					delete pair.second->node;
+					pair.second->node = nullptr;
 					obj_sub;
 				}
-				uv_close((uv_handle_t *)it->second, on_close_free_handle);
+				uv_close((uv_handle_t *)pair.second, on_close_free_handle);
 			}
 			pool->m_node2stream.clear();
 			// TCP connecting.
-			for (auto it = pool->m_connecting.begin(); it != pool->m_connecting.end(); ++it)
+			for (auto& connect : pool->m_connecting)
 			{
-				if ((*it)->node != nullptr)
+				if (connect->node != nullptr)
 				{
 					// Report connection down.
-					pool->m_callback.connectionStatus(*(*it)->node, false);
+					pool->m_callback.connectionStatus(*connect->node, false);
 					// Delete node data.
-					delete (*it)->node;
-					(*it)->node = nullptr;
+					delete connect->node;
+					connect->node = nullptr;
 					obj_sub;
 				}
-				uv_close((uv_handle_t *)*it, on_close_free_handle);
+				uv_close((uv_handle_t *)connect, on_close_free_handle);
 			}
 			pool->m_connecting.clear();
 			// Drop all waiting message.
-			for (auto it = pool->m_waitingSend.begin(); it != pool->m_waitingSend.end(); ++it)
+			for (const auto& pair : pool->m_waitingSend)
 			{
-				const CnetworkNode& node = it->first;
-				for (auto it1 = it->second.begin(); it1 != it->second.end(); ++it1)
+				const CnetworkNode& node = pair.first;
+				for (const auto& buf : pair.second)
 				{
-					pool->m_callback.drop(node, it1->base, it1->len);
-					free(it1->base);
+					pool->m_callback.drop(node, buf.base, buf.len);
+					free(buf.base); // We will clear the map, so no need to set nullptr here.
 				}
 			}
 			pool->m_waitingSend.clear();
 			// Drop all pending bind & message.
-			for (auto it = bindCopy.begin(); it != bindCopy.end(); ++it)
-				pool->m_callback.bindStatus(*it, false);
-			for (auto it = sendCopy.begin(); it != sendCopy.end(); ++it)
-				pool->m_callback.drop(it->node, it->data.getData(), it->data.getLength());
+			for (const auto& node : bindCopy)
+				pool->m_callback.bindStatus(node, false);
+			for (const auto& req : sendCopy)
+				pool->m_callback.drop(req.node, req.data.getData(), req.data.getLength());
 		}
 		else
 		{
@@ -661,32 +661,32 @@ namespace NETWORK_POOL
 			// Bind & send.
 			//
 			// Bind.
-			for (auto it = bindCopy.begin(); it != bindCopy.end(); ++it)
+			for (const auto& node : bindCopy)
 			{
-				switch (it->getProtocol())
+				switch (node.getProtocol())
 				{
 				case CnetworkNode::protocol_tcp:
 				{
-					__tcp_with_info *tcpServer = bindAndListenTcp(pool, &pool->m_loop, *it);
+					__tcp_with_info *tcpServer = bindAndListenTcp(pool, &pool->m_loop, node);
 					if (tcpServer != nullptr)
 						pool->m_tcpServers.insert(tcpServer);
-					pool->m_callback.bindStatus(*it, tcpServer != nullptr);
+					pool->m_callback.bindStatus(node, tcpServer != nullptr);
 				}
 					break;
 				case CnetworkNode::protocol_udp:
 					// Todo. Code here to implement UDP server.
 
 				default:
-					pool->m_callback.bindStatus(*it, false);
+					pool->m_callback.bindStatus(node, false);
 					break;
 				}
 			}
 			// Send.
-			for (auto it = sendCopy.begin(); it != sendCopy.end(); ++it)
+			for (auto& req : sendCopy)
 			{
-				const CnetworkNode& node = it->node;
-				Cbuffer& data = it->data;
-				const bool& bAutoConnect = it->auto_connect;
+				const CnetworkNode& node = req.node;
+				Cbuffer& data = req.data;
+				const bool& bAutoConnect = req.auto_connect;
 				switch (node.getProtocol())
 				{
 				case CnetworkNode::protocol_tcp:
@@ -760,10 +760,10 @@ namespace NETWORK_POOL
 		auto waitingIt = m_waitingSend.find(node);
 		if (waitingIt != m_waitingSend.end())
 		{
-			for (auto it = waitingIt->second.begin(); it != waitingIt->second.end(); ++it)
+			for (const auto& buf : waitingIt->second)
 			{
-				m_callback.drop(node, it->base, it->len);
-				free(it->base);
+				m_callback.drop(node, buf.base, buf.len);
+				free(buf.base); // We will erase it, so no need to set nullptr here.
 			}
 			m_waitingSend.erase(waitingIt);
 		}
