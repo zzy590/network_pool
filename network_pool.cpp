@@ -1,225 +1,21 @@
 
-#include <cstring>
-
 #include "network_pool.h"
-
-#define DBG 0
-
-#if DBG
-	#include <stdio.h>
-	#define _FPRINTF(_x) { fprintf _x; }
-#else
-	#define _FPRINTF(_x) {}
-#endif
-
-#define TCP_KEEPALIVE_DELAY 30 // 30s
-#define TCP_DEFAULT_BACKLOG 128
+#include "np_dbg.h"
 
 #define container_of(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
+#define on_error_goto_ec(_expr, _str) if ((_expr) != 0) { NP_FPRINTF(_str); goto _ec; }
+#define goto_ec(_str) { NP_FPRINTF(_str); goto _ec; }
 
 namespace NETWORK_POOL
 {
 	//
-	// Resource logger.
-	//
-
-	static std::atomic<int64_t> s_memorySize(0);
-	static std::atomic<int32_t> s_memoryCount(0);
-	static std::atomic<int32_t> s_objectCount(0);
-
-	// Throw(-1) when fail and throwOnFail.
-	static void *my_malloc(size_t sz, bool throwOnFail = true)
-	{
-		if (sz > 0x40000000) // Alloc more than 1GB is not allowed.
-		{
-			_FPRINTF((stderr, "malloc denied 0x%x(%u) error too large\n", sz, sz));
-			if (throwOnFail)
-				throw(-1);
-			return nullptr;
-		}
-		void *ptr = malloc(sizeof(uint32_t) + sz);
-		if (nullptr == ptr)
-		{
-			_FPRINTF((stderr, "malloc failed to alloc 0x%x(%u)\n", sz, sz));
-			if (throwOnFail)
-				throw(-1);
-			return nullptr;
-		}
-		*(uint32_t *)ptr = (uint32_t)sz;
-		s_memorySize += sz;
-		++s_memoryCount;
-	#if DBG
-		memset((uint32_t *)ptr + 1, -1, sz);
-	#endif
-		return (uint32_t *)ptr + 1;
-	}
-
-	static void my_free(void *ptr)
-	{
-		if (nullptr == ptr)
-			return;
-		void *org = (uint32_t *)ptr - 1;
-		uint32_t sz = *(uint32_t *)org;
-		if (sz > 0x40000000)
-		{
-			_FPRINTF((stderr, "malloc trace bad data 0x%x(%u)\n", sz, sz));
-			throw(-1);
-		}
-		else
-		{
-			s_memorySize -= sz;
-			--s_memoryCount;
-		}
-	#if DBG
-		memset(org, -1, sizeof(uint32_t) + sz);
-	#endif
-		free(org);
-	}
-
-	void getMemoryTrace(int64_t& memTotal, int32_t& memCnt, int32_t& objCnt)
-	{
-		memTotal = s_memorySize;
-		memCnt = s_memoryCount;
-		objCnt = s_objectCount;
-	}
-
-	#define malloc my_malloc
-	#define free my_free
-	#define obj_add { ++s_objectCount; }
-	#define obj_sub { --s_objectCount; }
-
-	//
-	// Cbuffer
-	//
-
-	inline void Cbuffer::transfer(uv_buf_t& buf)
-	{
-		buf.base = (char *)m_data;
-	#ifdef _WIN32
-		buf.len = (ULONG)m_length;
-	#else
-		buf.len = m_length;
-	#endif
-		m_data = nullptr;
-		m_maxLength = m_length = 0;
-	}
-
-	Cbuffer::Cbuffer()
-	{
-		m_data = nullptr;
-		m_maxLength = m_length = 0;
-	}
-
-	Cbuffer::Cbuffer(const size_t length)
-	{
-		if (0 == length)
-		{
-			m_data = nullptr;
-			m_maxLength = m_length = 0;
-		}
-		else
-		{
-			m_data = malloc(length);
-			m_maxLength = m_length = length;
-		}
-	}
-
-	Cbuffer::Cbuffer(const void *data, const size_t length)
-	{
-		m_data = malloc(length);
-		memcpy(m_data, data, length);
-		m_maxLength = m_length = length;
-	}
-
-	Cbuffer::Cbuffer(const Cbuffer& another)
-	{
-		m_data = malloc(another.m_length);
-		memcpy(m_data, another.m_data, another.m_length);
-		m_maxLength = m_length = another.m_length;
-	}
-
-	Cbuffer::~Cbuffer()
-	{
-		if (m_data != nullptr)
-			free(m_data);
-	}
-
-	const Cbuffer& Cbuffer::operator=(const Cbuffer& another)
-	{
-		if (another.m_length <= m_maxLength)
-		{
-			memcpy(m_data, another.m_data, another.m_length);
-			m_length = another.m_length;
-		}
-		else
-		{
-			if (m_data != nullptr)
-				free(m_data);
-			m_data = malloc(another.m_length);
-			memcpy(m_data, another.m_data, another.m_length);
-			m_maxLength = m_length = another.m_length;
-		}
-		return *this;
-	}
-
-	void Cbuffer::set(const void *data, const size_t length)
-	{
-		if (length <= m_maxLength)
-		{
-			memcpy(m_data, data, length);
-			m_length = length;
-		}
-		else
-		{
-			if (m_data != nullptr)
-				free(m_data);
-			m_data = malloc(length);
-			memcpy(m_data, data, length);
-			m_maxLength = m_length = length;
-		}
-	}
-
-	void Cbuffer::resize(const size_t preferLength, const size_t validLength)
-	{
-		if (preferLength <= m_maxLength)
-		{
-			m_length = preferLength;
-			return;
-		}
-		size_t copy = validLength > m_length ? m_length : validLength;
-		if (copy > 0)
-		{
-			void *newBuffer = malloc(preferLength);
-			memcpy(newBuffer, m_data, copy);
-			free(m_data);
-			m_data = newBuffer;
-			m_maxLength = m_length = preferLength;
-		}
-		else
-		{
-			if (m_data != nullptr)
-				free(m_data);
-			m_data = malloc(preferLength);
-			m_maxLength = m_length = preferLength;
-		}
-	}
-
-	//
 	// CnetworkPool
 	//
 
-	static void on_close_no_free(uv_handle_t *handle)
-	{
-	}
-
-	static void on_close_free_handle(uv_handle_t *handle)
-	{
-		free(handle);
-	}
-
 	static void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)
 	{
-		buf->base = (char *)malloc(suggested_size);
+		Ctcp *tcp = Ctcp::obtainFromTcp(handle);
+		buf->base = (char *)tcp->getPool()->getMemoryTrace()._malloc_throw(suggested_size);
 	#ifdef _WIN32
 		buf->len = (ULONG)suggested_size;
 	#else
@@ -227,45 +23,66 @@ namespace NETWORK_POOL
 	#endif
 	}
 
+	void on_tcp_timeout(uv_timer_t *handle)
+	{
+		Ctcp *tcp = Ctcp::obtain(handle);
+		tcp->getPool()->shutdownTcpConnection_set_nullptr(tcp);
+	}
+
+	// This function should be called at last.
+	// Note: It will shutdown tcp if set timer fail.
+	void reset_tcp_idle_timeout(Ctcp *tcp)
+	{
+		// Reset idle timeout if needed.
+		if (0 == tcp->getTcp()->write_queue_size) // Use uv_stream_get_write_queue_size in libuv 1.19.0.
+		{
+			// No pending send, reset the timer.
+			if (uv_timer_start(tcp->getTimer(), on_tcp_timeout, tcp->getPool()->getSettings().tcp_idle_timeout_in_seconds * 1000, 0) != 0)
+				tcp->getPool()->shutdownTcpConnection_set_nullptr(tcp);
+		}
+	}
+
 	void on_tcp_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 	{
-		__tcp_with_info *clientInfo = container_of(client, __tcp_with_info, tcp);
+		Ctcp *tcp = Ctcp::obtain(client);
+		CnetworkPool *pool = tcp->getPool();
 		if (nread > 0)
 		{
 			// Report message.
-			if (clientInfo->node != nullptr)
-				clientInfo->pool->m_callback.message(*clientInfo->node, buf->base, nread);
+			pool->m_callback.message(tcp->getNode(), buf->base, nread);
+			// Reset idle close.
+			reset_tcp_idle_timeout(tcp);
 		}
 		else if (nread < 0)
 		{
 			if (nread != UV_EOF)
-				_FPRINTF((stderr, "Read error %s\n", uv_err_name((int)nread)));
+				NP_FPRINTF((stderr, "Read error %s\n", uv_err_name((int)nread)));
 			// Shutdown connection.
-			clientInfo->pool->shutdownTcpConnection(clientInfo);
+			pool->shutdownTcpConnection_set_nullptr(tcp);
 		}
-		free(buf->base);
+		pool->getMemoryTrace()._free_set_nullptr(const_cast<char *>(buf->base));
 	}
 
 	void on_tcp_write_done(uv_write_t *req, int status)
 	{
-		__write_with_info *writeInfo = container_of(req, __write_with_info, write);
+		CnetworkPool::__write_with_info *writeInfo = container_of(req, CnetworkPool::__write_with_info, write);
+		Ctcp *tcp = Ctcp::obtain(req->handle);
+		CnetworkPool *pool = tcp->getPool();
 		if (status != 0)
 		{
-			_FPRINTF((stderr, "Tcp write error %s\n", uv_strerror(status)));
+			NP_FPRINTF((stderr, "Tcp write error %s.\n", uv_strerror(status)));
 			// Drop message notify.
-			__tcp_with_info *tcpInfo = container_of(req->handle, __tcp_with_info, tcp);
-			if (tcpInfo->node != nullptr)
-			{
-				const CnetworkNode& node = *tcpInfo->node;
-				for (size_t i = 0; i < writeInfo->num; ++i)
-					tcpInfo->pool->m_callback.drop(node, writeInfo->buf[i].base, writeInfo->buf[i].len);
-			}
+			for (size_t i = 0; i < writeInfo->num; ++i)
+				pool->m_callback.drop(tcp->getNode(), writeInfo->buf[i].base, writeInfo->buf[i].len);
 			// Shutdown connection.
-			tcpInfo->pool->shutdownTcpConnection(tcpInfo);
+			pool->shutdownTcpConnection_set_nullptr(tcp);
 		}
+		else
+			reset_tcp_idle_timeout(tcp);
+		// Free write buffer.
 		for (size_t i = 0; i < writeInfo->num; ++i)
-			free(writeInfo->buf[i].base);
-		free(writeInfo);
+			pool->getMemoryTrace()._free_set_nullptr(writeInfo->buf[i].base);
+		pool->getMemoryTrace()._free_set_nullptr(writeInfo);
 	}
 
 	void on_new_connection(uv_stream_t *server, int status)
@@ -273,296 +90,193 @@ namespace NETWORK_POOL
 		if (status != 0)
 		{
 			// WTF? Listen fail?
-			_FPRINTF((stderr, "New connection error %s\n", uv_strerror(status)));
+			NP_FPRINTF((stderr, "Tcp listen error %s.\n", uv_strerror(status)));
 			// Report this error and close the server.
-			__tcp_with_info *serverInfo = container_of(server, __tcp_with_info, tcp);
-			if (serverInfo->node != nullptr)
-			{
-				// Clean set.
-				serverInfo->pool->m_tcpServers.erase(serverInfo);
-				// Report bind down.
-				serverInfo->pool->m_callback.bindStatus(*serverInfo->node, false);
-				// Delete node data.
-				delete serverInfo->node;
-				serverInfo->node = nullptr;
-				obj_sub;
-			}
-			uv_close((uv_handle_t *)serverInfo, on_close_free_handle);
+			Ctcp *serverTcp = Ctcp::obtain(server);
+			// Clean set.
+			auto sz = serverTcp->getPool()->m_tcpServers.erase(serverTcp);
+			if (sz > 0)
+				serverTcp->getPool()->m_callback.bindStatus(serverTcp->getNode(), false);// Report bind down.
+			// Close.
+			Ctcp::close_set_nullptr(serverTcp);
 			return;
 		}
 		// Prepare for the new connection.
-		__tcp_with_info *client = (__tcp_with_info *)malloc(sizeof(__tcp_with_info), false);
-		if (nullptr == client)
+		CnetworkPool *pool = Ctcp::obtain(server)->getPool();
+		Ctcp *clientTcp = Ctcp::alloc(pool, &pool->m_loop);
+		if (nullptr == clientTcp)
 		{
-			// Insufficient memory.
-			// Just ignore.
-			_FPRINTF((stderr, "New connection error with insufficient memory.\n"));
+			// Just return.
+			NP_FPRINTF((stderr, "New incoming connection tcp allocation error.\n"));
 			return;
 		}
-		CnetworkPool *pool = container_of(server, __tcp_with_info, tcp)->pool;
-		client->pool = pool;
-		client->node = nullptr;
-		if (uv_tcp_init(&pool->m_loop, &client->tcp) != 0)
+		on_error_goto_ec(
+			uv_accept(server, clientTcp->getStream()),
+			(stderr, "New incoming connection tcp accept error.\n"));
+		sockaddr_storage peer;
+		int len = sizeof(peer);
+		on_error_goto_ec(
+			uv_tcp_getpeername(clientTcp->getTcp(), (sockaddr *)&peer, &len),
+			(stderr, "New incoming connection tcp getpeername error.\n"));
+		char ip[64];
+		switch (peer.ss_family)
 		{
-			free(client);
-			_FPRINTF((stderr, "New connection TCP init error\n"));
-			return;
+		case AF_INET:
+			on_error_goto_ec(
+				uv_ip4_name((sockaddr_in *)&peer, ip, sizeof(ip)),
+				(stderr, "New incoming connection tcp ipv4 name error.\n"));
+			clientTcp->getNode().set(CnetworkNode::protocol_tcp, ip, ntohs(((sockaddr_in *)&peer)->sin_port));
+			break;
+		case AF_INET6:
+			on_error_goto_ec(
+				uv_ip6_name((sockaddr_in6 *)&peer, ip, sizeof(ip)),
+				(stderr, "New incoming connection tcp ipv6 name error.\n"));
+			clientTcp->getNode().set(CnetworkNode::protocol_tcp, ip, ntohs(((sockaddr_in6 *)&peer)->sin6_port));
+			break;
+		default:
+			goto_ec((stderr, "New incoming connection tcp unknown peer ss_family.\n"));
 		}
-		if (0 == uv_accept(server, (uv_stream_t *)client))
-		{
-			sockaddr_storage peer;
-			int len = sizeof(peer);
-			if (0 == uv_tcp_getpeername(&client->tcp, (sockaddr *)&peer, &len))
-			{
-				char ip[64];
-				switch (peer.ss_family)
-				{
-				case AF_INET:
-					if (0 == uv_ip4_name((sockaddr_in *)&peer, ip, sizeof(ip)))
-					{
-						client->node = new CnetworkNode(CnetworkNode::protocol_tcp, ip, ntohs(((sockaddr_in *)&peer)->sin_port));
-						obj_add;
-					}
-					else
-					{
-						_FPRINTF((stderr, "New connection IPv4 name error\n"));
-						goto _ec;
-					}
-					break;
-				case AF_INET6:
-					if (0 == uv_ip6_name((sockaddr_in6 *)&peer, ip, sizeof(ip)))
-					{
-						client->node = new CnetworkNode(CnetworkNode::protocol_tcp, ip, ntohs(((sockaddr_in6 *)&peer)->sin6_port));
-						obj_add;
-					}
-					else
-					{
-						_FPRINTF((stderr, "New connection IPv6 name error\n"));
-						goto _ec;
-					}
-					break;
-				default:
-					_FPRINTF((stderr, "New connection unknown peer ss_family\n"));
-					goto _ec;
-				}
-			}
-			else
-			{
-				_FPRINTF((stderr, "New connection TCP getpeername error\n"));
-				goto _ec;
-			}
-			// Do the port reuse check.
-			if (pool->getStreamByNode(*client->node) != nullptr)
-				goto _ec;
-			if (uv_read_start((uv_stream_t *)client, alloc_buffer, on_tcp_read) != 0)
-			{
-				_FPRINTF((stderr, "New connection TCP read start error\n"));
-				goto _ec;
-			}
-			// Startup connection.
-			pool->startupTcpConnection(client);
-			return;
-		}
+		// Do the port reuse check.
+		if (pool->getStreamByNode(clientTcp->getNode()) != nullptr)
+			goto_ec((stderr, "New incoming connection tcp remote port reuse.\n"));
+		// Set idle timeout.
+		on_error_goto_ec(
+			uv_timer_start(clientTcp->getTimer(), on_tcp_timeout, pool->getSettings().tcp_idle_timeout_in_seconds * 1000, 0),
+			(stderr, "New incoming connection tcp timer start error.\n"));
+		// Start read.
+		on_error_goto_ec(
+			uv_read_start(clientTcp->getStream(), alloc_buffer, on_tcp_read),
+			(stderr, "New incoming connection tcp read start error.\n"));
+		// Startup connection.
+		pool->startupTcpConnection_may_set_nullptr(clientTcp);
+		return;
 	_ec:
-		if (client->node != nullptr)
-		{
-			delete client->node;
-			client->node = nullptr;
-			obj_sub;
-		}
-		uv_close((uv_handle_t *)client, on_close_free_handle);
+		Ctcp::close_set_nullptr(clientTcp);
 	}
 
 	void on_connect_done(uv_connect_t *req, int status)
 	{
-		__tcp_with_info *tcpInfo = container_of(req->handle, __tcp_with_info, tcp);
+		Ctcp *tcp = Ctcp::obtain(req->handle);
+		CnetworkPool *pool = tcp->getPool();
 		// Remove from connecting and free request.
-		tcpInfo->pool->m_connecting.erase(tcpInfo);
-		free(req);
+		pool->m_connecting.erase(tcp);
+		pool->getMemoryTrace()._free_set_nullptr(req);
 		// Error?
 		if (status < 0)
-		{
-			_FPRINTF((stderr, "Connect TCP error %s\n", uv_strerror(status)));
-			goto _ec;
-		}
-		// Prepare for read.
-		if (uv_read_start((uv_stream_t *)tcpInfo, alloc_buffer, on_tcp_read) != 0)
-		{
-			_FPRINTF((stderr, "Connect TCP read start error\n"));
-			goto _ec;
-		}
+			goto_ec((stderr, "Connect tcp error %s.\n", uv_strerror(status)));
+		// Set timeout.
+		on_error_goto_ec(
+			uv_timer_start(tcp->getTimer(), on_tcp_timeout, tcp->getPool()->getSettings().tcp_idle_timeout_in_seconds * 1000, 0),
+			(stderr, "Connect tcp timer start error.\n"));
+		// Start read.
+		on_error_goto_ec(
+			uv_read_start(tcp->getStream(), alloc_buffer, on_tcp_read),
+			(stderr, "Connect tcp read start error.\n"));
 		// Startup connection.
-		tcpInfo->pool->startupTcpConnection(tcpInfo);
+		pool->startupTcpConnection_may_set_nullptr(tcp);
 		return;
 	_ec:
 		// Shutdown connection.
-		tcpInfo->pool->shutdownTcpConnection(tcpInfo);
+		pool->shutdownTcpConnection_set_nullptr(tcp, true);
 	}
 
-	static inline bool setTcp(uv_tcp_t *tcp)
-	{
-		if (uv_tcp_nodelay(tcp, 1) != 0)
-		{
-			_FPRINTF((stderr, "Error TCP nodelay.\n"));
-			return false;
-		}
-		if (uv_tcp_keepalive(tcp, 1, TCP_KEEPALIVE_DELAY) != 0)
-		{
-			_FPRINTF((stderr, "Error TCP keepalive.\n"));
-			return false;
-		}
-		if (uv_tcp_simultaneous_accepts(tcp, 1) != 0)
-		{
-			_FPRINTF((stderr, "Error TCP simultaneous accepts.\n"));
-			return false;
-		}
-		return true;
-	}
-
-	static __tcp_with_info *bindAndListenTcp(CnetworkPool *pool, uv_loop_t *loop, const CnetworkNode& node)
+	static Ctcp *bindAndListenTcp(CnetworkPool *pool, uv_loop_t *loop, const CnetworkNode& node)
 	{
 		if (node.getProtocol() != CnetworkNode::protocol_tcp)
 			return nullptr;
-		__tcp_with_info *server = (__tcp_with_info *)malloc(sizeof(__tcp_with_info), false);
+		Ctcp *server = Ctcp::alloc(pool, loop, false);
 		if (nullptr == server)
 		{
 			// Insufficient memory.
-			_FPRINTF((stderr, "Bind and listen TCP error with insufficient memory.\n"));
+			NP_FPRINTF((stderr, "Bind and listen tcp error with insufficient memory.\n"));
 			return nullptr;
 		}
-		server->pool = pool;
-		server->node = nullptr;
-		if (uv_tcp_init(loop, &server->tcp) != 0)
-		{
-			_FPRINTF((stderr, "Error TCP init.\n"));
-			free(server);
-			return nullptr;
-		}
-		server->node = new CnetworkNode(node);
-		obj_add;
-		if (!setTcp(&server->tcp))
-			goto _ec;
+		server->getNode().set(node);
 		if (node.isIPv6())
 		{
 			sockaddr_in6 addr;
-			if (uv_ip6_addr(node.getIp().c_str(), node.getPort(), &addr) != 0)
-			{
-				_FPRINTF((stderr, "Error IPv6 addr.\n"));
-				goto _ec;
-			}
-			if (uv_tcp_bind(&server->tcp, (const sockaddr *)&addr, 0) != 0)
-			{
-				_FPRINTF((stderr, "Error TCP bind.\n"));
-				goto _ec;
-			}
+			on_error_goto_ec(
+				uv_ip6_addr(node.getIp().c_str(), node.getPort(), &addr),
+				(stderr, "Bind and listen tcp ipv6 addr error.\n"));
+			on_error_goto_ec(
+				uv_tcp_bind(server->getTcp(), (const sockaddr *)&addr, 0),
+				(stderr, "Bind and listen tcp bind error.\n"));
 		}
 		else
 		{
 			sockaddr_in addr;
-			if (uv_ip4_addr(node.getIp().c_str(), node.getPort(), &addr) != 0)
-			{
-				_FPRINTF((stderr, "Error IPv4 addr.\n"));
-				goto _ec;
-			}
-			if (uv_tcp_bind(&server->tcp, (const sockaddr *)&addr, 0) != 0)
-			{
-				_FPRINTF((stderr, "Error TCP bind.\n"));
-				goto _ec;
-			}
+			on_error_goto_ec(
+				uv_ip4_addr(node.getIp().c_str(), node.getPort(), &addr),
+				(stderr, "Bind and listen tcp ipv4 addr error.\n"));
+			on_error_goto_ec(
+				uv_tcp_bind(server->getTcp(), (const sockaddr *)&addr, 0),
+				(stderr, "Bind and listen tcp bind error.\n"));
 		}
-		if (uv_listen((uv_stream_t *)server, TCP_DEFAULT_BACKLOG, on_new_connection) != 0)
-		{
-			_FPRINTF((stderr, "Error TCP listen.\n"));
-			goto _ec;
-		}
+		on_error_goto_ec(
+			uv_listen(server->getStream(), pool->getSettings().tcp_backlog, on_new_connection),
+			(stderr, "Bind and listen tcp listen error.\n"));
 		return server;
 	_ec:
-		if (server->node != nullptr)
-		{
-			delete server->node;
-			server->node = nullptr;
-			obj_sub;
-		}
-		uv_close((uv_handle_t *)server, on_close_free_handle);
+		Ctcp::close_set_nullptr(server);
 		return nullptr;
 	}
 
-	static __tcp_with_info *connectTcp(CnetworkPool *pool, uv_loop_t *loop, const CnetworkNode& node)
+	static Ctcp *connectTcp(CnetworkPool *pool, uv_loop_t *loop, const CnetworkNode& node)
 	{
 		if (node.getProtocol() != CnetworkNode::protocol_tcp)
 			return nullptr;
-		uv_connect_t *connect = (uv_connect_t *)malloc(sizeof(uv_connect_t), false);
+		uv_connect_t *connect = (uv_connect_t *)pool->getMemoryTrace()._malloc_no_throw(sizeof(uv_connect_t));
 		if (nullptr == connect)
 		{
 			// Insufficient memory.
-			_FPRINTF((stderr, "Connect TCP error with insufficient memory.\n"));
+			NP_FPRINTF((stderr, "Connect tcp error with insufficient memory.\n"));
 			return nullptr;
 		}
-		__tcp_with_info *tcpInfo = (__tcp_with_info *)malloc(sizeof(__tcp_with_info), false);
-		if (nullptr == tcpInfo)
+		Ctcp *tcp = Ctcp::alloc(pool, loop);
+		if (nullptr == tcp)
 		{
 			// Insufficient memory.
-			_FPRINTF((stderr, "Connect TCP error with insufficient memory.\n"));
-			free(connect);
+			// Just free & return.
+			NP_FPRINTF((stderr, "Connect tcp error with insufficient memory.\n"));
+			pool->getMemoryTrace()._free_set_nullptr(connect);
 			return nullptr;
 		}
-		tcpInfo->pool = pool;
-		tcpInfo->node = nullptr;
-		if (uv_tcp_init(loop, &tcpInfo->tcp) != 0)
-		{
-			_FPRINTF((stderr, "Error TCP init.\n"));
-			free(tcpInfo);
-			free(connect);
-			return nullptr;
-		}
-		tcpInfo->node = new CnetworkNode(node);
-		obj_add;
-		if (!setTcp(&tcpInfo->tcp))
-			goto _ec;
+		tcp->getNode().set(node);
+		// Set timeout.
+		on_error_goto_ec(
+			uv_timer_start(tcp->getTimer(), on_tcp_timeout, pool->getSettings().tcp_connect_timeout_in_seconds * 1000, 0),
+			(stderr, "Connect tcp timer start error.\n"));
+		// Connect.
 		if (node.isIPv6())
 		{
 			sockaddr_in6 addr;
-			if (uv_ip6_addr(node.getIp().c_str(), node.getPort(), &addr) != 0)
-			{
-				_FPRINTF((stderr, "Error IPv6 addr.\n"));
-				goto _ec;
-			}
-			if (uv_tcp_connect(connect, &tcpInfo->tcp, (const sockaddr *)&addr, on_connect_done) != 0)
-			{
-				_FPRINTF((stderr, "Error TCP connect.\n"));
-				goto _ec;
-			}
+			on_error_goto_ec(
+				uv_ip6_addr(node.getIp().c_str(), node.getPort(), &addr),
+				(stderr, "Connect tcp ipv6 addr error.\n"));
+			on_error_goto_ec(
+				uv_tcp_connect(connect, tcp->getTcp(), (const sockaddr *)&addr, on_connect_done),
+				(stderr, "Connect tcp connect error.\n"));
 		}
 		else
 		{
 			sockaddr_in addr;
-			if (uv_ip4_addr(node.getIp().c_str(), node.getPort(), &addr) != 0)
-			{
-				_FPRINTF((stderr, "Error IPv4 addr.\n"));
-				goto _ec;
-			}
-			if (uv_tcp_connect(connect, &tcpInfo->tcp, (const sockaddr *)&addr, on_connect_done) != 0)
-			{
-				_FPRINTF((stderr, "Error TCP connect.\n"));
-				goto _ec;
-			}
+			on_error_goto_ec(
+				uv_ip4_addr(node.getIp().c_str(), node.getPort(), &addr),
+				(stderr, "Connect tcp ipv4 addr error.\n"));
+			on_error_goto_ec(
+				uv_tcp_connect(connect, tcp->getTcp(), (const sockaddr *)&addr, on_connect_done),
+				(stderr, "Connect tcp connect error.\n"));
 		}
-		return tcpInfo;
+		return tcp;
 	_ec:
-		if (tcpInfo->node != nullptr)
-		{
-			delete tcpInfo->node;
-			tcpInfo->node = nullptr;
-			obj_sub;
-		}
-		uv_close((uv_handle_t *)tcpInfo, on_close_free_handle);
-		free(connect);
+		pool->getMemoryTrace()._free_set_nullptr(connect);
+		Ctcp::close_set_nullptr(tcp);
 		return nullptr;
 	}
 
 	void on_wakeup(uv_async_t *async)
 	{
-		CnetworkPool *pool = container_of(async, __async_with_info, async)->pool;
+		CnetworkPool *pool = Casync::obtain(async)->getPool();
 		// Copy pending to local first.
 		std::unordered_set<CnetworkNode, __network_hash> bindCopy;
 		std::list<CnetworkPool::__pending_send> sendCopy;
@@ -576,75 +290,51 @@ namespace NETWORK_POOL
 			// Stop and free all resources.
 			//
 			// Async.
-			uv_close((uv_handle_t *)&pool->m_wakeup, on_close_no_free);
+			Casync::close_set_nullptr(pool->m_wakeup);
 			// TCP servers.
 			for (auto& server : pool->m_tcpServers)
 			{
-				if (server->node != nullptr)
-				{
-					// Report bind down.
-					pool->m_callback.bindStatus(*server->node, false);
-					// Delete node data.
-					delete server->node;
-					server->node = nullptr;
-					obj_sub;
-				}
-				uv_close((uv_handle_t *)server, on_close_free_handle);
+				// Report bind down.
+				pool->m_callback.bindStatus(server->getNode(), false);
+				// Close.
+				Ctcp::close_set_nullptr(const_cast<Ctcp *>(server));
 			}
 			pool->m_tcpServers.clear();
 			// UDP servers.
 			for (auto& server : pool->m_udpServers)
 			{
-				if (server->node != nullptr)
-				{
-					// Report bind down.
-					pool->m_callback.bindStatus(*server->node, false);
-					// Delete node data.
-					delete server->node;
-					server->node = nullptr;
-					obj_sub;
-				}
-				uv_close((uv_handle_t *)server, on_close_free_handle);
+				// Report bind down.
+				pool->m_callback.bindStatus(server->getNode(), false);
+				// Close.
+				Cudp::close_set_nullptr(const_cast<Cudp *>(server));
 			}
 			pool->m_udpServers.clear();
 			// TCP connections.
 			for (auto& pair : pool->m_node2stream)
 			{
-				if (pair.second->node != nullptr)
-				{
-					// Report connection down.
-					pool->m_callback.connectionStatus(*pair.second->node, false);
-					// Delete node data.
-					delete pair.second->node;
-					pair.second->node = nullptr;
-					obj_sub;
-				}
-				uv_close((uv_handle_t *)pair.second, on_close_free_handle);
+				// Report connection down.
+				pool->m_callback.connectionStatus(pair.second->getNode(), false);
+				// Close.
+				Ctcp::close_set_nullptr(pair.second);
 			}
 			pool->m_node2stream.clear();
 			// TCP connecting.
 			for (auto& connect : pool->m_connecting)
 			{
-				if (connect->node != nullptr)
-				{
-					// Report connection down.
-					pool->m_callback.connectionStatus(*connect->node, false);
-					// Delete node data.
-					delete connect->node;
-					connect->node = nullptr;
-					obj_sub;
-				}
-				uv_close((uv_handle_t *)connect, on_close_free_handle);
+				// Report connection down.
+				pool->m_callback.connectionStatus(connect->getNode(), false);
+				// Close.
+				Ctcp::close_set_nullptr(const_cast<Ctcp *>(connect));
 			}
 			pool->m_connecting.clear();
 			// Drop all waiting message.
-			for (const auto& pair : pool->m_waitingSend)
+			for (auto& pair : pool->m_waitingSend)
 			{
 				const CnetworkNode& node = pair.first;
-				for (const auto& buf : pair.second)
+				for (auto& buf : pair.second)
 				{
 					pool->m_callback.drop(node, buf.base, buf.len);
-					free(buf.base); // We will clear the map, so no need to set nullptr here.
+					pool->getMemoryTrace()._free_set_nullptr(buf.base);
 				}
 			}
 			pool->m_waitingSend.clear();
@@ -652,7 +342,7 @@ namespace NETWORK_POOL
 			for (const auto& node : bindCopy)
 				pool->m_callback.bindStatus(node, false);
 			for (const auto& req : sendCopy)
-				pool->m_callback.drop(req.node, req.data.getData(), req.data.getLength());
+				pool->m_callback.drop(req.m_node, req.m_data.getData(), req.m_data.getLength());
 		}
 		else
 		{
@@ -666,7 +356,7 @@ namespace NETWORK_POOL
 				{
 				case CnetworkNode::protocol_tcp:
 				{
-					__tcp_with_info *tcpServer = bindAndListenTcp(pool, &pool->m_loop, node);
+					Ctcp *tcpServer = bindAndListenTcp(pool, &pool->m_loop, node);
 					if (tcpServer != nullptr)
 						pool->m_tcpServers.insert(tcpServer);
 					pool->m_callback.bindStatus(node, tcpServer != nullptr);
@@ -683,15 +373,15 @@ namespace NETWORK_POOL
 			// Send.
 			for (auto& req : sendCopy)
 			{
-				const CnetworkNode& node = req.node;
-				Cbuffer& data = req.data;
-				const bool& bAutoConnect = req.auto_connect;
+				const CnetworkNode& node = req.m_node;
+				Cbuffer& data = req.m_data;
+				const bool& bAutoConnect = req.m_bAutoConnect;
 				switch (node.getProtocol())
 				{
 				case CnetworkNode::protocol_tcp:
 				{
-					__tcp_with_info *tcpInfo = pool->getStreamByNode(node);
-					if (nullptr == tcpInfo)
+					Ctcp *tcp = pool->getStreamByNode(node);
+					if (nullptr == tcp)
 					{
 						// Check if any waiting data, start connect if no waiting.
 						bool bNeedConnect = pool->m_waitingSend.find(node) == pool->m_waitingSend.end();
@@ -702,38 +392,49 @@ namespace NETWORK_POOL
 							pool->pushWaiting(node, data);
 							if (bNeedConnect)
 							{
-								tcpInfo = connectTcp(pool, &pool->m_loop, node);
-								if (nullptr == tcpInfo)
+								tcp = connectTcp(pool, &pool->m_loop, node);
+								if (nullptr == tcp)
 								{
 									// Connect fail.
 									pool->m_callback.connectionStatus(node, false);
 									pool->dropWaiting(node);
 								}
 								else // Put in connecting set.
-									pool->m_connecting.insert(tcpInfo);
+									pool->m_connecting.insert(tcp);
 							}
 						}
 					}
 					else
 					{
 						// Just use write.
-						__write_with_info *writeInfo = (__write_with_info *)malloc(sizeof(__write_with_info), false); // Only one buf.
+						CnetworkPool::__write_with_info *writeInfo = (CnetworkPool::__write_with_info *)pool->getMemoryTrace()._malloc_no_throw(sizeof(CnetworkPool::__write_with_info)); // Only one buf.
 						if (nullptr == writeInfo)
 						{
 							// Insufficient memory.
 							// Just drop.
-							_FPRINTF((stderr, "Send TCP error with insufficient memory.\n"));
+							NP_FPRINTF((stderr, "Send tcp error with insufficient memory.\n"));
 							pool->m_callback.drop(node, data.getData(), data.getLength());
 						}
 						else
 						{
-							writeInfo->num = 1;
-							data.transfer(writeInfo->buf[0]);
-							if (uv_write(&writeInfo->write, (uv_stream_t *)tcpInfo, writeInfo->buf, (unsigned int)writeInfo->num, on_tcp_write_done) != 0)
+							// First reset timer.
+							if (uv_timer_start(tcp->getTimer(), on_tcp_timeout, pool->getSettings().tcp_send_timeout_in_seconds * 1000, 0) != 0)
 							{
-								pool->dropWriteAndFree(node, writeInfo);
-								// Shutdown connection.
-								pool->shutdownTcpConnection(tcpInfo);
+								free(writeInfo);
+								// Just drop.
+								NP_FPRINTF((stderr, "Send tcp timer start error.\n"));
+								pool->m_callback.drop(node, data.getData(), data.getLength());
+							}
+							else
+							{
+								writeInfo->num = 1;
+								data.transfer(writeInfo->buf[0]);
+								if (uv_write(&writeInfo->write, tcp->getStream(), writeInfo->buf, (unsigned int)writeInfo->num, on_tcp_write_done) != 0)
+								{
+									pool->dropWriteAndFree(node, writeInfo);
+									// Shutdown connection.
+									pool->shutdownTcpConnection_set_nullptr(tcp);
+								}
 							}
 						}
 					}
@@ -759,10 +460,10 @@ namespace NETWORK_POOL
 		auto waitingIt = m_waitingSend.find(node);
 		if (waitingIt != m_waitingSend.end())
 		{
-			for (const auto& buf : waitingIt->second)
+			for (auto& buf : waitingIt->second)
 			{
 				m_callback.drop(node, buf.base, buf.len);
-				free(buf.base); // We will erase it, so no need to set nullptr here.
+				m_memoryTrace._free_set_nullptr(buf.base);
 			}
 			m_waitingSend.erase(waitingIt);
 		}
@@ -788,12 +489,12 @@ namespace NETWORK_POOL
 		for (size_t i = 0; i < writeInfo->num; ++i)
 		{
 			m_callback.drop(node, writeInfo->buf[i].base, writeInfo->buf[i].len);
-			free(writeInfo->buf[i].base);
+			m_memoryTrace._free_set_nullptr(writeInfo->buf[i].base);
 		}
-		free(writeInfo);
+		m_memoryTrace._free_set_nullptr(writeInfo);
 	}
 
-	inline __tcp_with_info *CnetworkPool::getStreamByNode(const CnetworkNode& node)
+	inline Ctcp *CnetworkPool::getStreamByNode(const CnetworkNode& node)
 	{
 		auto it = m_node2stream.find(node);
 		if (m_node2stream.end() == it)
@@ -801,17 +502,17 @@ namespace NETWORK_POOL
 		return it->second;
 	}
 
-	inline __write_with_info *CnetworkPool::getWriteFromWaitingByNode(const CnetworkNode& node)
+	inline CnetworkPool::__write_with_info *CnetworkPool::getWriteFromWaitingByNode(const CnetworkNode& node)
 	{
 		auto it = m_waitingSend.find(node);
 		if (m_waitingSend.end() == it)
 			return nullptr;
-		__write_with_info *writeInfo = (__write_with_info *)malloc(sizeof(__write_with_info) + sizeof(uv_buf_t)*(it->second.size() - 1), false);
+		CnetworkPool::__write_with_info *writeInfo = (CnetworkPool::__write_with_info *)m_memoryTrace._malloc_no_throw(sizeof(CnetworkPool::__write_with_info) + sizeof(uv_buf_t)*(it->second.size() - 1));
 		if (nullptr == writeInfo)
 		{
 			// Insufficient memory.
 			// Just drop.
-			_FPRINTF((stderr, "Send waiting TCP error with insufficient memory.\n"));
+			NP_FPRINTF((stderr, "Send tcp error with insufficient memory.\n"));
 			dropWaiting(node);
 			return nullptr;
 		}
@@ -822,73 +523,51 @@ namespace NETWORK_POOL
 		return writeInfo;
 	}
 
-	inline void CnetworkPool::startupTcpConnection(__tcp_with_info *tcpInfo)
+	inline void CnetworkPool::startupTcpConnection_may_set_nullptr(Ctcp *& tcp)
 	{
-		if (tcpInfo->node != nullptr)
-		{
-			const CnetworkNode& node = *tcpInfo->node;
-			// Add map.
-			auto ib = m_node2stream.insert(std::make_pair(node, tcpInfo));
-			if (!ib.second)
-			{
-				// Remote port reuse?
-				// If a connection is startup, no data will be written to waiting queue, so just reject.
-				_FPRINTF((stderr, "Error startup a connection with remote port reuse.\n"));
-				// Delete node data.
-				delete tcpInfo->node;
-				tcpInfo->node = nullptr;
-				obj_sub;
-				// Close connection.
-				uv_close((uv_handle_t *)tcpInfo, on_close_free_handle);
-				return;
-			}
-			// Set Tx & Rx buffer size.
-			int tmpSize = m_sendBufferSize;
-			if (tmpSize != 0)
-				uv_send_buffer_size((uv_handle_t *)tcpInfo, &tmpSize); // It's just prefer, so ignore the return.
-			tmpSize = m_recvBufferSize;
-			if (tmpSize != 0)
-				uv_recv_buffer_size((uv_handle_t *)tcpInfo, &tmpSize); // It's just prefer, so ignore the return.
-			// Report new connection.
-			m_callback.connectionStatus(node, true);
-			// Send message waiting.
-			__write_with_info *writeInfo = getWriteFromWaitingByNode(node);
-			if (writeInfo != nullptr)
-			{
-				if (uv_write(&writeInfo->write, (uv_stream_t *)tcpInfo, writeInfo->buf, (unsigned int)writeInfo->num, on_tcp_write_done) != 0)
-				{
-					dropWriteAndFree(node, writeInfo);
-					// Shutdown connection.
-					shutdownTcpConnection(tcpInfo);
-				}
-			}
-		}
-		else
+		if (tcp->getNode().getIp().empty())
 		{
 			// WTF to get here? The only thing we can do is just close it.
-			_FPRINTF((stderr, "Fatal error startup a connection whithout node.\n"));
-			uv_close((uv_handle_t *)tcpInfo, on_close_free_handle);
+			NP_FPRINTF((stderr, "Fatal error startup a connection whithout node.\n"));
+			Ctcp::close_set_nullptr(tcp);
+			return;
+		}
+		// Add map.
+		auto ib = m_node2stream.insert(std::make_pair(tcp->getNode(), tcp));
+		if (!ib.second)
+		{
+			// Remote port reuse?
+			// If a connection is startup, no data will be written to waiting queue, so just reject.
+			NP_FPRINTF((stderr, "Error startup a connection with remote port reuse.\n"));
+			// Close connection.
+			Ctcp::close_set_nullptr(tcp);
+			return;
+		}
+		// Report new connection.
+		m_callback.connectionStatus(tcp->getNode(), true);
+		// Send message waiting.
+		__write_with_info *writeInfo = getWriteFromWaitingByNode(tcp->getNode());
+		if (writeInfo != nullptr)
+		{
+			if (uv_write(&writeInfo->write, tcp->getStream(), writeInfo->buf, (unsigned int)writeInfo->num, on_tcp_write_done) != 0)
+			{
+				dropWriteAndFree(tcp->getNode(), writeInfo);
+				// Shutdown connection.
+				shutdownTcpConnection_set_nullptr(tcp);
+			}
 		}
 	}
 
-	inline void CnetworkPool::shutdownTcpConnection(__tcp_with_info *tcpInfo)
+	inline void CnetworkPool::shutdownTcpConnection_set_nullptr(Ctcp *& tcp, bool bAlwaysNotify)
 	{
-		if (tcpInfo->node != nullptr)
-		{
-			const CnetworkNode& node = *tcpInfo->node;
-			// Clean map.
-			m_node2stream.erase(node);
-			// Report connection down.
-			m_callback.connectionStatus(node, false);
-			// Drop message notify.
-			dropWaiting(node);
-			// Delete node data.
-			delete tcpInfo->node;
-			tcpInfo->node = nullptr;
-			obj_sub;
-		}
+		// Clean map.
+		auto sz = m_node2stream.erase(tcp->getNode());
+		if (sz > 0 || bAlwaysNotify)
+			m_callback.connectionStatus(tcp->getNode(), false); // Report connection down.
+		// Drop message notify.
+		dropWaiting(tcp->getNode());
 		// Close connection.
-		uv_close((uv_handle_t *)tcpInfo, on_close_free_handle);
+		Ctcp::close_set_nullptr(tcp);
 	}
 
 	void CnetworkPool::internalThread()
@@ -899,8 +578,8 @@ namespace NETWORK_POOL
 			m_state = bad;
 			return;
 		}
-		m_wakeup.pool = this;
-		if (uv_async_init(&m_loop, &m_wakeup.async, on_wakeup) != 0)
+		m_wakeup = Casync::alloc(this, &m_loop, on_wakeup);
+		if (nullptr == m_wakeup)
 		{
 			uv_loop_close(&m_loop);
 			m_state = bad;
@@ -909,26 +588,5 @@ namespace NETWORK_POOL
 		m_state = good;
 		uv_run(&m_loop, UV_RUN_DEFAULT);
 		uv_loop_close(&m_loop);
-	}
-
-	CnetworkPool::CnetworkPool(CnetworkPoolCallback& callback)
-		:m_state(initializing), m_callback(callback), m_bWantExit(false), m_sendBufferSize(0), m_recvBufferSize(0), m_udpIndex(0)
-	{
-		m_thread = new std::thread(&CnetworkPool::internalThread, this); // May throw.
-		obj_add;
-		while (initializing == m_state)
-			std::this_thread::yield();
-		if (m_state != good)
-			throw(-1);
-	}
-
-	CnetworkPool::~CnetworkPool()
-	{
-		m_bWantExit = true;
-		uv_async_send(&m_wakeup.async);
-		m_thread->join();
-		delete m_thread;
-		m_thread = nullptr;
-		obj_sub;
 	}
 }
