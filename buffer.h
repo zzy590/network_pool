@@ -66,8 +66,7 @@ namespace NETWORK_POOL
 		}
 		~Cbuffer()
 		{
-			if (m_data != nullptr)
-				m_trace._free_set_nullptr(m_data);
+			m_trace._free_set_nullptr(m_data); // No need to check nullptr.
 		}
 
 		const Cbuffer& operator=(const Cbuffer& another)
@@ -79,13 +78,28 @@ namespace NETWORK_POOL
 			}
 			else
 			{
-				if (m_data != nullptr)
-					m_trace._free_set_nullptr(m_data);
+				m_trace._free_set_nullptr(m_data); // No need to check nullptr.
 				m_data = m_trace._malloc_throw(another.m_length);
 				memcpy(m_data, another.m_data, another.m_length);
 				m_maxLength = m_length = another.m_length;
 			}
 			return *this;
+		}
+
+		inline void set(const Cbuffer& another)
+		{
+			if (another.m_length <= m_maxLength)
+			{
+				memcpy(m_data, another.m_data, another.m_length);
+				m_length = another.m_length;
+			}
+			else
+			{
+				m_trace._free_set_nullptr(m_data); // No need to check nullptr.
+				m_data = m_trace._malloc_throw(another.m_length);
+				memcpy(m_data, another.m_data, another.m_length);
+				m_maxLength = m_length = another.m_length;
+			}
 		}
 
 		inline void set(const void *data, const size_t length)
@@ -97,8 +111,7 @@ namespace NETWORK_POOL
 			}
 			else
 			{
-				if (m_data != nullptr)
-					m_trace._free_set_nullptr(m_data);
+				m_trace._free_set_nullptr(m_data); // No need to check nullptr.
 				m_data = m_trace._malloc_throw(length);
 				memcpy(m_data, data, length);
 				m_maxLength = m_length = length;
@@ -112,6 +125,7 @@ namespace NETWORK_POOL
 				m_length = preferLength;
 				return;
 			}
+			// We need to enlarge the buffer.
 			size_t copy = validLength > m_length ? m_length : validLength;
 			if (copy > 0)
 			{
@@ -123,8 +137,7 @@ namespace NETWORK_POOL
 			}
 			else
 			{
-				if (m_data != nullptr)
-					m_trace._free_set_nullptr(m_data);
+				m_trace._free_set_nullptr(m_data); // No need to check nullptr.
 				m_data = m_trace._malloc_throw(preferLength);
 				m_maxLength = m_length = preferLength;
 			}

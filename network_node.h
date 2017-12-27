@@ -23,7 +23,7 @@ namespace NETWORK_POOL
 
 		inline void rehash()
 		{
-			m_hash = m_protocol == protocol_tcp ? 0 : 1;
+			m_hash = m_protocol;
 			for (const auto& val : m_ip)
 				m_hash = 31 * m_hash + val;
 			m_hash = (m_hash << 16) + m_port;

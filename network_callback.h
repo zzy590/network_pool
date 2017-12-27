@@ -18,9 +18,10 @@ namespace NETWORK_POOL
 		//       and drop after connection down notify means failed by the down of the connection.
 		virtual void drop(const CnetworkNode& node, const void *data, const size_t length) = 0;
 
-		// Local bind and remote connection notify.
+		// Local bind notify.
 		virtual void bindStatus(const CnetworkNode& node, const bool bSuccess) = 0;
-		// Note: No connection down notify if you send a message with no auto connect when no connection.
+		// Remote connection notify.
+		// Note: No connection down notify if you send a message without auto connect when there is no connection established.
 		virtual void connectionStatus(const CnetworkNode& node, const bool bSuccess) = 0;
 	};
 }
