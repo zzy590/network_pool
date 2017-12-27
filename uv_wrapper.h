@@ -7,8 +7,6 @@
 
 namespace NETWORK_POOL
 {
-	class CnetworkPool;
-
 	#define PRIVATE_CLASS(_class) \
 		private: \
 			_class() {} \
@@ -17,12 +15,15 @@ namespace NETWORK_POOL
 			const _class& operator=(const _class& another) = delete;
 	#define container_of(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 
+	class CnetworkPool;
+
 	class Casync
 	{
 		PRIVATE_CLASS(Casync)
 	private:
 		uv_async_t m_async;
 		bool m_inited;
+		bool m_closing;
 		CnetworkPool *m_pool;
 
 		friend class CmemoryTrace;
@@ -58,6 +59,7 @@ namespace NETWORK_POOL
 		uv_timer_t m_timer;
 		bool m_tcpInited;
 		bool m_timerInited;
+		bool m_closing;
 		CnetworkPool *m_pool;
 		CnetworkNode m_node;
 
@@ -118,6 +120,7 @@ namespace NETWORK_POOL
 	private:
 		uv_udp_t m_udp;
 		bool m_inited;
+		bool m_closing;
 		CnetworkPool *m_pool;
 		CnetworkNode m_node;
 

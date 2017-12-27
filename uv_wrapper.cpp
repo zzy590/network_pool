@@ -21,6 +21,7 @@ namespace NETWORK_POOL
 		if (nullptr == async)
 			return nullptr;
 		async->m_inited = false;
+		async->m_closing = false;
 		async->m_pool = pool;
 		if (uv_async_init(loop, &async->m_async, cb) != 0)
 		{
@@ -35,7 +36,11 @@ namespace NETWORK_POOL
 	{
 		if (async->m_inited)
 		{
-			uv_close((uv_handle_t *)&async->m_async, on_close_async);
+			if (!async->m_closing)
+			{
+				uv_close((uv_handle_t *)&async->m_async, on_close_async);
+				async->m_closing = true;
+			}
 			async = nullptr;
 		}
 		else
@@ -62,28 +67,30 @@ namespace NETWORK_POOL
 			tcp->getPool()->getMemoryTrace()._delete_set_nullptr<Ctcp>(tcp);
 	}
 
-	static inline bool setTcp(uv_tcp_t *tcp, unsigned int keepaliveDelay, int txSz, int rxSz)
+	static inline bool setTcp(uv_tcp_t *tcp, const __preferred_network_settings& settings)
 	{
-		if (uv_tcp_nodelay(tcp, 1) != 0)
+		if (uv_tcp_nodelay(tcp, settings.tcp_enable_nodelay) != 0)
 		{
 			NP_FPRINTF((stderr, "Error set tcp nodelay.\n"));
 			return false;
 		}
-		if (uv_tcp_keepalive(tcp, 1, keepaliveDelay) != 0)
+		if (uv_tcp_keepalive(tcp, settings.tcp_enable_keepalive, settings.tcp_keepalive_time_in_seconds) != 0)
 		{
 			NP_FPRINTF((stderr, "Error set tcp keepalive.\n"));
 			return false;
 		}
-		if (uv_tcp_simultaneous_accepts(tcp, 1) != 0)
+		if (uv_tcp_simultaneous_accepts(tcp, settings.tcp_enable_simultaneous_accepts) != 0)
 		{
 			NP_FPRINTF((stderr, "Error set tcp simultaneous accepts.\n"));
 			return false;
 		}
 		// Set Tx & Rx buffer size.
-		if (txSz != 0)
-			uv_send_buffer_size((uv_handle_t *)tcp, &txSz); // It's just prefer, so ignore the return.
-		if (rxSz != 0)
-			uv_recv_buffer_size((uv_handle_t *)tcp, &rxSz); // It's just prefer, so ignore the return.
+		int tmpSz = settings.tcp_send_buffer_size;
+		if (tmpSz != 0)
+			uv_send_buffer_size((uv_handle_t *)tcp, &tmpSz); // It's just prefer, so ignore the return.
+		tmpSz = settings.tcp_recv_buffer_size;
+		if (tmpSz != 0)
+			uv_recv_buffer_size((uv_handle_t *)tcp, &tmpSz); // It's just prefer, so ignore the return.
 		return true;
 	}
 
@@ -94,6 +101,7 @@ namespace NETWORK_POOL
 			return nullptr;
 		tcp->m_tcpInited = false;
 		tcp->m_timerInited = false;
+		tcp->m_closing = false;
 		tcp->m_pool = pool;
 		if (uv_tcp_init(loop, &tcp->m_tcp) != 0)
 			goto _ec;
@@ -104,10 +112,7 @@ namespace NETWORK_POOL
 				goto _ec;
 			tcp->m_timerInited = true;
 		}
-		if (!setTcp(&tcp->m_tcp,
-			pool->getSettings().tcp_keepalive_time_in_seconds, // This is in seconds.
-			pool->getSettings().tcp_tx_buffer_size,
-			pool->getSettings().tcp_rx_buffer_size))
+		if (!setTcp(&tcp->m_tcp, pool->getSettings()))
 			goto _ec;
 		return tcp;
 	_ec:
@@ -119,11 +124,15 @@ namespace NETWORK_POOL
 	{
 		if (tcp->m_tcpInited || tcp->m_timerInited)
 		{
-			// Both close callback should be set if initialized.
-			if (tcp->m_tcpInited)
-				uv_close((uv_handle_t *)&tcp->m_tcp, on_close_tcp);
-			if (tcp->m_timerInited)
-				uv_close((uv_handle_t *)&tcp->m_timer, on_close_tcp_timer);
+			if (!tcp->m_closing)
+			{
+				// Both close callback should be set if initialized.
+				if (tcp->m_tcpInited)
+					uv_close((uv_handle_t *)&tcp->m_tcp, on_close_tcp);
+				if (tcp->m_timerInited)
+					uv_close((uv_handle_t *)&tcp->m_timer, on_close_tcp_timer);
+				tcp->m_closing = true;
+			}
 			tcp = nullptr;
 		}
 		else
@@ -146,6 +155,7 @@ namespace NETWORK_POOL
 		if (nullptr == udp)
 			return nullptr;
 		udp->m_inited = false;
+		udp->m_closing = false;
 		udp->m_pool = pool;
 		if (uv_udp_init(loop, &udp->m_udp) != 0)
 		{
@@ -160,7 +170,11 @@ namespace NETWORK_POOL
 	{
 		if (udp->m_inited)
 		{
-			uv_close((uv_handle_t *)&udp->m_udp, on_close_udp);
+			if (!udp->m_closing)
+			{
+				uv_close((uv_handle_t *)&udp->m_udp, on_close_udp);
+				udp->m_closing = true;
+			}
 			udp = nullptr;
 		}
 		else
