@@ -101,11 +101,14 @@ namespace NETWORK_POOL
 		};
 		std::list<__pending_send> m_pendingSend;
 		
+		//
+		// Following data must be accessed by internal thread.
+		//
+
 		// Use round robin to send message on UDP.
 		int m_udpIndex;
 
 		// Loop must be initialized in internal work thread.
-		// Following data must be accessed by internal thread.
 		uv_loop_t m_loop;
 		Casync *m_wakeup;
 		std::unordered_set<Ctcp *> m_tcpServers;
@@ -114,6 +117,7 @@ namespace NETWORK_POOL
 		std::unordered_set<Ctcp *> m_connecting;
 		std::unordered_map<CnetworkNode, std::vector<uv_buf_t>, __network_hash> m_waitingSend; // Waiting for connection complete.
 
+		friend void tcp_alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf);
 		friend void on_tcp_timeout(uv_timer_t *handle);
 		friend void reset_tcp_idle_timeout_may_set_nullptr(Ctcp *& tcp);
 		friend void on_tcp_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf);
@@ -159,7 +163,6 @@ namespace NETWORK_POOL
 			return m_settings;
 		}
 
-		// Internal use only.
 		inline CmemoryTrace& getMemoryTrace()
 		{
 			return m_memoryTrace;

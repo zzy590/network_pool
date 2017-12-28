@@ -12,14 +12,17 @@ namespace NETWORK_POOL
 	// CnetworkPool
 	//
 
-	static void tcp_alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)
+	void tcp_alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)
 	{
 		Ctcp *tcp = Ctcp::obtainFromTcp(handle);
-		buf->base = (char *)tcp->getPool()->getMemoryTrace()._malloc_throw(suggested_size);
+		void *buffer = nullptr;
+		size_t length = 0;
+		tcp->getPool()->m_callback.allocateMemoryForMessage(tcp->getNode(), suggested_size, buffer, length);
+		buf->base = (char *)buffer;
 	#ifdef _WIN32
-		buf->len = (ULONG)suggested_size;
+		buf->len = (ULONG)length;
 	#else
-		buf->len = suggested_size;
+		buf->len = length;
 	#endif
 	}
 
@@ -50,17 +53,21 @@ namespace NETWORK_POOL
 		{
 			// Report message.
 			pool->m_callback.message(tcp->getNode(), buf->base, nread);
+			pool->m_callback.deallocateMemoryForMessage(tcp->getNode(), buf->base, buf->len);
 			// Reset idle close.
 			reset_tcp_idle_timeout_may_set_nullptr(tcp);
 		}
-		else if (nread < 0)
+		else
 		{
-			if (nread != UV_EOF)
-				NP_FPRINTF((stderr, "Read error %s.\n", uv_err_name((int)nread)));
-			// Shutdown connection.
-			pool->shutdownTcpConnection_set_nullptr(tcp);
+			pool->m_callback.deallocateMemoryForMessage(tcp->getNode(), buf->base, buf->len);
+			if (nread < 0)
+			{
+				if (nread != UV_EOF)
+					NP_FPRINTF((stderr, "Read error %s.\n", uv_err_name((int)nread)));
+				// Shutdown connection.
+				pool->shutdownTcpConnection_set_nullptr(tcp);
+			}
 		}
-		pool->getMemoryTrace()._free_set_nullptr(const_cast<char *>(buf->base));
 	}
 
 	void on_tcp_write_done(uv_write_t *req, int status)
