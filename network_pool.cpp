@@ -121,7 +121,8 @@ namespace NETWORK_POOL
 			uv_accept(server, clientTcp->getStream()),
 			(stderr, "New incoming connection tcp accept error.\n"));
 		sockaddr_storage peer;
-		int len = sizeof(peer);
+		int len;
+		len = sizeof(peer);
 		on_error_goto_ec(
 			uv_tcp_getpeername(clientTcp->getTcp(), (sockaddr *)&peer, &len),
 			(stderr, "New incoming connection tcp getpeername error.\n"));
@@ -304,7 +305,8 @@ namespace NETWORK_POOL
 				// Report bind down.
 				pool->m_callback.bindStatus(server->getNode(), false);
 				// Close.
-				Ctcp::close_set_nullptr(const_cast<Ctcp *>(server));
+				Ctcp *tmp = server;
+				Ctcp::close_set_nullptr(tmp);
 			}
 			pool->m_tcpServers.clear();
 			// UDP servers.
@@ -313,7 +315,8 @@ namespace NETWORK_POOL
 				// Report bind down.
 				pool->m_callback.bindStatus(server->getNode(), false);
 				// Close.
-				Cudp::close_set_nullptr(const_cast<Cudp *>(server));
+				Cudp *tmp = server;
+				Cudp::close_set_nullptr(tmp);
 			}
 			pool->m_udpServers.clear();
 			// TCP connections.
@@ -331,7 +334,8 @@ namespace NETWORK_POOL
 				// Report connection down.
 				pool->m_callback.connectionStatus(connect->getNode(), false);
 				// Close.
-				Ctcp::close_set_nullptr(const_cast<Ctcp *>(connect));
+				Ctcp *tmp = connect;
+				Ctcp::close_set_nullptr(tmp);
 			}
 			pool->m_connecting.clear();
 			// Drop all waiting message.
