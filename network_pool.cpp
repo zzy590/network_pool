@@ -109,7 +109,7 @@ namespace NETWORK_POOL
 			// Report this error and close the server.
 			Ctcp *serverTcp = Ctcp::obtain(server);
 			// Clean set.
-			auto sz = pool->m_tcpServers.erase(serverTcp);
+			auto sz = pool->m_tcpServers.erase(serverTcp->getNode());
 			if (sz > 0)
 				pool->m_callback.bindStatus(serverTcp->getNode(), false);// Report bind down.
 			// Close.
@@ -293,13 +293,16 @@ namespace NETWORK_POOL
 	{
 		CnetworkPool *pool = Casync::obtain(async)->getPool();
 		// Copy pending to local first.
-		std::unordered_set<CnetworkNode, __network_hash> bindCopy;
+		std::unordered_map<CnetworkNode, bool, __network_hash> bindCopy;
 		std::list<CnetworkPool::__pending_send> sendCopy;
 		std::unordered_map<CnetworkNode, bool, __network_hash> closeCopy;
 		pool->m_lock.lock();
-		std::swap(bindCopy, pool->m_pendingBind);
-		std::swap(sendCopy, pool->m_pendingSend);
-		std::swap(closeCopy, pool->m_pendingClose);
+		bindCopy = std::move(pool->m_pendingBind);
+		sendCopy = std::move(pool->m_pendingSend);
+		closeCopy = std::move(pool->m_pendingClose);
+		pool->m_pendingBind.clear();
+		pool->m_pendingSend.clear();
+		pool->m_pendingClose.clear();
 		pool->m_lock.unlock();
 		if (pool->m_bWantExit)
 		{
@@ -309,18 +312,19 @@ namespace NETWORK_POOL
 			// Async.
 			Casync::close_set_nullptr(pool->m_wakeup);
 			// TCP servers.
-			std::unordered_set<Ctcp *> tmpTcpServers(std::move(pool->m_tcpServers));
-			for (auto& server : tmpTcpServers)
+			std::unordered_map<CnetworkNode, Ctcp *, __network_hash> tmpTcpServers(std::move(pool->m_tcpServers));
+			pool->m_tcpServers.clear();
+			for (auto& pair : tmpTcpServers)
 			{
 				// Report bind down.
-				pool->m_callback.bindStatus(server->getNode(), false);
+				pool->m_callback.bindStatus(pair.first, false);
 				// Close.
-				Ctcp *tmp = server;
-				Ctcp::close_set_nullptr(tmp);
+				Ctcp::close_set_nullptr(pair.second);
 			}
 			tmpTcpServers.clear();
 			// UDP servers.
 			std::vector<Cudp *> tmpUdpServers(std::move(pool->m_udpServers));
+			pool->m_udpServers.clear();
 			for (auto& server : tmpUdpServers)
 			{
 				// Report bind down.
@@ -332,6 +336,7 @@ namespace NETWORK_POOL
 			tmpUdpServers.clear();
 			// TCP connections.
 			std::unordered_map<CnetworkNode, Ctcp *, __network_hash> tmpNode2stream(std::move(pool->m_node2stream));
+			pool->m_node2stream.clear();
 			for (auto& pair : tmpNode2stream)
 			{
 				// Report connection down.
@@ -342,6 +347,7 @@ namespace NETWORK_POOL
 			tmpNode2stream.clear();
 			// TCP connecting.
 			std::unordered_set<Ctcp *> tmpConnecting(std::move(pool->m_connecting));
+			pool->m_connecting.clear();
 			for (auto& connect : tmpConnecting)
 			{
 				// Report connection down.
@@ -365,8 +371,8 @@ namespace NETWORK_POOL
 			// Clear close flag.
 			pool->m_waitingClose.clear();
 			// Drop all pending bind & message.
-			for (const auto& node : bindCopy)
-				pool->m_callback.bindStatus(node, false);
+			for (const auto& pair : bindCopy)
+				pool->m_callback.bindStatus(pair.first, false);
 			for (const auto& req : sendCopy)
 				pool->m_callback.drop(req.m_node, req.m_data.getData(), req.m_data.getLength());
 		}
@@ -376,16 +382,41 @@ namespace NETWORK_POOL
 			// Bind, send & close.
 			//
 			// Bind.
-			for (const auto& node : bindCopy)
+			for (const auto& pair : bindCopy)
 			{
+				const CnetworkNode& node = pair.first;
+				const bool& bBind = pair.second;
 				switch (node.getProtocol())
 				{
 				case CnetworkNode::protocol_tcp:
 				{
-					Ctcp *tcpServer = bindAndListenTcp(pool, &pool->m_loop, node);
-					if (tcpServer != nullptr)
-						pool->m_tcpServers.insert(tcpServer);
-					pool->m_callback.bindStatus(node, tcpServer != nullptr);
+					auto it = pool->m_tcpServers.find(node);
+					if (it != pool->m_tcpServers.end())
+					{
+						if (bBind)
+							pool->m_callback.bindStatus(node, true);
+						else
+						{
+							// Unbind.
+							Ctcp *tcp = it->second;
+							pool->m_tcpServers.erase(it);
+							pool->m_callback.bindStatus(node, false);
+							Ctcp::close_set_nullptr(tcp);
+						}
+					}
+					else
+					{
+						if (bBind)
+						{
+							// Bind.
+							Ctcp *tcpServer = bindAndListenTcp(pool, &pool->m_loop, node);
+							if (tcpServer != nullptr)
+								pool->m_tcpServers.insert(std::make_pair(node, tcpServer));
+							pool->m_callback.bindStatus(node, tcpServer != nullptr);
+						}
+						else
+							pool->m_callback.bindStatus(node, false);
+					}
 				}
 					break;
 				case CnetworkNode::protocol_udp:

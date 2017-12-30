@@ -87,7 +87,7 @@ namespace NETWORK_POOL
 
 		// Data which exchanged between internal and external.
 		std::mutex m_lock;
-		std::unordered_set<CnetworkNode, __network_hash> m_pendingBind;
+		std::unordered_map<CnetworkNode, bool, __network_hash> m_pendingBind;
 		struct __pending_send
 		{
 			CnetworkNode m_node;
@@ -125,7 +125,7 @@ namespace NETWORK_POOL
 		// Loop must be initialized in internal work thread.
 		uv_loop_t m_loop;
 		Casync *m_wakeup;
-		std::unordered_set<Ctcp *> m_tcpServers;
+		std::unordered_map<CnetworkNode, Ctcp *, __network_hash> m_tcpServers;
 		std::vector<Cudp *> m_udpServers;
 		std::unordered_map<CnetworkNode, Ctcp *, __network_hash> m_node2stream;
 		std::unordered_set<Ctcp *> m_connecting;
@@ -183,12 +183,12 @@ namespace NETWORK_POOL
 			return m_memoryTrace;
 		}
 		
-		bool bind(const CnetworkNode& node)
+		bool bind(const CnetworkNode& node, const bool bBind = true)
 		{
 			m_lock.lock();
 			try
 			{
-				m_pendingBind.insert(node);
+				m_pendingBind.insert(std::make_pair(node, bBind));
 			}
 			catch (...)
 			{
@@ -219,7 +219,7 @@ namespace NETWORK_POOL
 					m_lock.unlock();
 					return false;
 				}
-				std::swap(m_pendingSend.back(), temp);
+				m_pendingSend.back() = std::move(temp);
 				m_lock.unlock();
 				uv_async_send(m_wakeup->getAsync());
 				return true;
