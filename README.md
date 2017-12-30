@@ -1,7 +1,7 @@
 # network_pool
 A async network connection pool written in C++ with libuv.
 
-# Benchmark
+## Benchmark
 ApacheBench of a simple http server with network_pool:
 
 - Single thread on single core 1GB ram of Tencent Cloud Virtual Machine.
