@@ -12,7 +12,9 @@ namespace NETWORK_POOL
 			_class() {} \
 			~_class() {} \
 			_class(const _class& another) = delete; \
-			const _class& operator=(const _class& another) = delete;
+			_class(_class&& another) = delete; \
+			const _class& operator=(const _class& another) = delete; \
+			const _class& operator=(_class&& another) = delete;
 	#define container_of(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 
 	class CnetworkPool;
@@ -48,6 +50,11 @@ namespace NETWORK_POOL
 		inline CnetworkPool *getPool() const
 		{
 			return m_pool;
+		}
+
+		inline bool isClosing() const
+		{
+			return m_closing;
 		}
 	};
 
@@ -112,6 +119,11 @@ namespace NETWORK_POOL
 		{
 			return m_node;
 		}
+
+		inline bool isClosing() const
+		{
+			return m_closing;
+		}
 	};
 
 	class Cudp
@@ -150,6 +162,11 @@ namespace NETWORK_POOL
 		inline CnetworkNode& getNode()
 		{
 			return m_node;
+		}
+
+		inline bool isClosing() const
+		{
+			return m_closing;
 		}
 	};
 

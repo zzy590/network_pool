@@ -17,7 +17,9 @@ namespace NETWORK_POOL
 		CmemoryTrace() :m_size(0), m_count(0) {}
 
 		CmemoryTrace(const CmemoryTrace& another) = delete;
+		CmemoryTrace(CmemoryTrace&& another) = delete;
 		const CmemoryTrace& operator=(const CmemoryTrace& another) = delete;
+		const CmemoryTrace& operator=(CmemoryTrace&& another) = delete;
 
 		inline uint32_t getObjectCount() const
 		{

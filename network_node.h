@@ -31,11 +31,18 @@ namespace NETWORK_POOL
 
 	public:
 		CnetworkNode()
-			:m_protocol(protocol_tcp), m_port(0) { rehash(); }
+			:m_protocol(protocol_tcp), m_port(0), m_hash(0) {} // All zero and hash is 0.
 		CnetworkNode(const protocol_type protocol, const std::string& ip, const unsigned short port)
 			:m_protocol(protocol), m_ip(ip), m_port(port) { rehash(); }
 		CnetworkNode(const CnetworkNode& another)
 			:m_protocol(another.m_protocol), m_ip(another.m_ip), m_port(another.m_port), m_hash(another.m_hash) {}
+		CnetworkNode(CnetworkNode&& another)
+			:m_protocol(another.m_protocol), m_ip(std::move(another.m_ip)), m_port(another.m_port), m_hash(another.m_hash)
+		{
+			another.m_protocol = protocol_tcp;
+			another.m_port = 0;
+			another.m_hash = 0;
+		}
 
 		const CnetworkNode& operator=(const CnetworkNode& another)
 		{
@@ -43,6 +50,17 @@ namespace NETWORK_POOL
 			m_ip = another.m_ip;
 			m_port = another.m_port;
 			m_hash = another.m_hash;
+			return *this;
+		}
+		const CnetworkNode& operator=(CnetworkNode&& another)
+		{
+			m_protocol = another.m_protocol;
+			m_ip = std::move(another.m_ip);
+			m_port = another.m_port;
+			m_hash = another.m_hash;
+			another.m_protocol = protocol_tcp;
+			another.m_port = 0;
+			another.m_hash = 0;
 			return *this;
 		}
 		bool operator<(const CnetworkNode& another) const
@@ -132,17 +150,30 @@ namespace NETWORK_POOL
 		}
 
 	public:
-		CnetworkPair() { rehash(); }
+		CnetworkPair() :m_hash(0) {} // All zero and hash is 0.
 		CnetworkPair(const CnetworkNode& local, const CnetworkNode& remote)
 			:m_local(local), m_remote(remote) { rehash(); }
 		CnetworkPair(const CnetworkPair& another)
 			:m_local(another.m_local), m_remote(another.m_remote), m_hash(another.m_hash) {}
+		CnetworkPair(CnetworkPair&& another)
+			:m_local(std::move(another.m_local)), m_remote(std::move(another.m_remote)), m_hash(another.m_hash)
+		{
+			another.m_hash = 0;
+		}
 
 		const CnetworkPair& operator=(const CnetworkPair& another)
 		{
 			m_local = another.m_local;
 			m_remote = another.m_remote;
 			m_hash = another.m_hash;
+			return *this;
+		}
+		const CnetworkPair& operator=(CnetworkPair&& another)
+		{
+			m_local = std::move(another.m_local);
+			m_remote = std::move(another.m_remote);
+			m_hash = another.m_hash;
+			another.m_hash = 0;
 			return *this;
 		}
 		bool operator<(const CnetworkPair& another) const

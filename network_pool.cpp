@@ -15,6 +15,7 @@ namespace NETWORK_POOL
 	void tcp_alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)
 	{
 		Ctcp *tcp = Ctcp::obtainFromTcp(handle);
+		// Every tcp_alloc_buffer will follow a on_tcp_read, so we don't care about the closing.
 		void *buffer = nullptr;
 		size_t length = 0;
 		tcp->getPool()->m_callback.allocateMemoryForMessage(tcp->getNode(), suggested_size, buffer, length);
@@ -32,12 +33,12 @@ namespace NETWORK_POOL
 		tcp->getPool()->shutdownTcpConnection_set_nullptr(tcp);
 	}
 
-	// This function should be called at last.
+	// This function should be called at last and the tcp ***MUST*** be no closing.
 	// Note: It will shutdown tcp if set timer fail.
 	void reset_tcp_idle_timeout_may_set_nullptr(Ctcp *& tcp)
 	{
 		// Reset idle timeout if needed.
-		if (0 == tcp->getTcp()->write_queue_size) // Use uv_stream_get_write_queue_size in libuv 1.19.0.
+		if (0 == tcp->getStream()->write_queue_size) // Use uv_stream_get_write_queue_size in libuv 1.19.0.
 		{
 			// No pending send, reset the timer.
 			if (uv_timer_start(tcp->getTimer(), on_tcp_timeout, tcp->getPool()->getSettings().tcp_idle_timeout_in_seconds * 1000, 0) != 0)
@@ -55,7 +56,8 @@ namespace NETWORK_POOL
 			pool->m_callback.message(tcp->getNode(), buf->base, nread);
 			pool->m_callback.deallocateMemoryForMessage(tcp->getNode(), buf->base, buf->len);
 			// Reset idle close.
-			reset_tcp_idle_timeout_may_set_nullptr(tcp);
+			if (!tcp->isClosing())
+				reset_tcp_idle_timeout_may_set_nullptr(tcp);
 		}
 		else
 		{
@@ -84,8 +86,13 @@ namespace NETWORK_POOL
 			// Shutdown connection.
 			pool->shutdownTcpConnection_set_nullptr(tcp);
 		}
-		else
-			reset_tcp_idle_timeout_may_set_nullptr(tcp);
+		else if (!tcp->isClosing())
+		{
+			if (0 == tcp->getStream()->write_queue_size && pool->m_waitingClose.find(tcp) != pool->m_waitingClose.end())
+				pool->shutdownTcpConnection_set_nullptr(tcp);
+			else
+				reset_tcp_idle_timeout_may_set_nullptr(tcp);
+		}
 		// Free write buffer.
 		for (size_t i = 0; i < writeInfo->num; ++i)
 			pool->getMemoryTrace()._free_set_nullptr(writeInfo->buf[i].base);
@@ -170,7 +177,7 @@ namespace NETWORK_POOL
 		pool->m_connecting.erase(tcp);
 		pool->getMemoryTrace()._free_set_nullptr(req);
 		// Error?
-		if (status < 0)
+		if (status < 0 || tcp->isClosing())
 			goto_ec((stderr, "Connect tcp error %s.\n", uv_strerror(status)));
 		// Set timeout.
 		on_error_goto_ec(
@@ -288,9 +295,11 @@ namespace NETWORK_POOL
 		// Copy pending to local first.
 		std::unordered_set<CnetworkNode, __network_hash> bindCopy;
 		std::list<CnetworkPool::__pending_send> sendCopy;
+		std::unordered_map<CnetworkNode, bool, __network_hash> closeCopy;
 		pool->m_lock.lock();
 		std::swap(bindCopy, pool->m_pendingBind);
 		std::swap(sendCopy, pool->m_pendingSend);
+		std::swap(closeCopy, pool->m_pendingClose);
 		pool->m_lock.unlock();
 		if (pool->m_bWantExit)
 		{
@@ -300,7 +309,8 @@ namespace NETWORK_POOL
 			// Async.
 			Casync::close_set_nullptr(pool->m_wakeup);
 			// TCP servers.
-			for (auto& server : pool->m_tcpServers)
+			std::unordered_set<Ctcp *> tmpTcpServers(std::move(pool->m_tcpServers));
+			for (auto& server : tmpTcpServers)
 			{
 				// Report bind down.
 				pool->m_callback.bindStatus(server->getNode(), false);
@@ -308,9 +318,10 @@ namespace NETWORK_POOL
 				Ctcp *tmp = server;
 				Ctcp::close_set_nullptr(tmp);
 			}
-			pool->m_tcpServers.clear();
+			tmpTcpServers.clear();
 			// UDP servers.
-			for (auto& server : pool->m_udpServers)
+			std::vector<Cudp *> tmpUdpServers(std::move(pool->m_udpServers));
+			for (auto& server : tmpUdpServers)
 			{
 				// Report bind down.
 				pool->m_callback.bindStatus(server->getNode(), false);
@@ -318,18 +329,20 @@ namespace NETWORK_POOL
 				Cudp *tmp = server;
 				Cudp::close_set_nullptr(tmp);
 			}
-			pool->m_udpServers.clear();
+			tmpUdpServers.clear();
 			// TCP connections.
-			for (auto& pair : pool->m_node2stream)
+			std::unordered_map<CnetworkNode, Ctcp *, __network_hash> tmpNode2stream(std::move(pool->m_node2stream));
+			for (auto& pair : tmpNode2stream)
 			{
 				// Report connection down.
 				pool->m_callback.connectionStatus(pair.second->getNode(), false);
 				// Close.
 				Ctcp::close_set_nullptr(pair.second);
 			}
-			pool->m_node2stream.clear();
+			tmpNode2stream.clear();
 			// TCP connecting.
-			for (auto& connect : pool->m_connecting)
+			std::unordered_set<Ctcp *> tmpConnecting(std::move(pool->m_connecting));
+			for (auto& connect : tmpConnecting)
 			{
 				// Report connection down.
 				pool->m_callback.connectionStatus(connect->getNode(), false);
@@ -337,7 +350,7 @@ namespace NETWORK_POOL
 				Ctcp *tmp = connect;
 				Ctcp::close_set_nullptr(tmp);
 			}
-			pool->m_connecting.clear();
+			tmpConnecting.clear();
 			// Drop all waiting message.
 			for (auto& pair : pool->m_waitingSend)
 			{
@@ -349,6 +362,8 @@ namespace NETWORK_POOL
 				}
 			}
 			pool->m_waitingSend.clear();
+			// Clear close flag.
+			pool->m_waitingClose.clear();
 			// Drop all pending bind & message.
 			for (const auto& node : bindCopy)
 				pool->m_callback.bindStatus(node, false);
@@ -358,7 +373,7 @@ namespace NETWORK_POOL
 		else
 		{
 			//
-			// Bind & send.
+			// Bind, send & close.
 			//
 			// Bind.
 			for (const auto& node : bindCopy)
@@ -452,6 +467,20 @@ namespace NETWORK_POOL
 						pool->m_callback.connectionStatus(node, false);
 					pool->m_callback.drop(node, data.getData(), data.getLength());
 					break;
+				}
+			}
+			// Close.
+			for (const auto& pair : closeCopy)
+			{
+				const CnetworkNode& node = pair.first;
+				const bool& bForceClose = pair.second;
+				Ctcp *tcp = pool->getStreamByNode(node);
+				if (tcp != nullptr)
+				{
+					if (bForceClose || 0 == tcp->getStream()->write_queue_size)
+						pool->shutdownTcpConnection_set_nullptr(tcp);
+					else
+						pool->m_waitingClose.insert(tcp);
 				}
 			}
 		}
@@ -562,9 +591,11 @@ namespace NETWORK_POOL
 		}
 	}
 
+	// This function is idempotent, and can be called any time when tcp is valid(closing is also ok).
 	inline void CnetworkPool::shutdownTcpConnection_set_nullptr(Ctcp *& tcp, bool bAlwaysNotify)
 	{
-		// Clean map.
+		// Clean flag set & map.
+		m_waitingClose.erase(tcp);
 		auto sz = m_node2stream.erase(tcp->getNode());
 		if (sz > 0 || bAlwaysNotify)
 			m_callback.connectionStatus(tcp->getNode(), false); // Report connection down.

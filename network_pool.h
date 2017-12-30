@@ -95,11 +95,25 @@ namespace NETWORK_POOL
 			bool m_bAutoConnect;
 
 			__pending_send(CmemoryTrace& trace)
-				:m_data(trace) {}
+				:m_data(&trace) {}
 			__pending_send(CmemoryTrace& trace, const CnetworkNode& node, const void *data, const size_t length, const bool bAutoConnect)
-				:m_node(node), m_data(trace, data, length), m_bAutoConnect(bAutoConnect) {}
+				:m_node(node), m_data(&trace, data, length), m_bAutoConnect(bAutoConnect) {}
+
+			__pending_send(const __pending_send& another) = delete;
+			__pending_send(__pending_send&& another)
+				:m_node(std::move(another.m_node)), m_data(std::move(another.m_data)), m_bAutoConnect(m_bAutoConnect) {}
+
+			const __pending_send& operator=(const __pending_send& another) = delete;
+			const __pending_send& operator=(__pending_send&& another)
+			{
+				m_node = std::move(another.m_node);
+				m_data = std::move(another.m_data);
+				m_bAutoConnect = another.m_bAutoConnect;
+				return *this;
+			}
 		};
 		std::list<__pending_send> m_pendingSend;
+		std::unordered_map<CnetworkNode, bool, __network_hash> m_pendingClose;
 		
 		//
 		// Following data must be accessed by internal thread.
@@ -116,6 +130,7 @@ namespace NETWORK_POOL
 		std::unordered_map<CnetworkNode, Ctcp *, __network_hash> m_node2stream;
 		std::unordered_set<Ctcp *> m_connecting;
 		std::unordered_map<CnetworkNode, std::vector<uv_buf_t>, __network_hash> m_waitingSend; // Waiting for connection complete.
+		std::unordered_set<Ctcp *> m_waitingClose; // Waiting for sending complete and close.
 
 		friend void tcp_alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf);
 		friend void on_tcp_timeout(uv_timer_t *handle);
@@ -168,22 +183,67 @@ namespace NETWORK_POOL
 			return m_memoryTrace;
 		}
 		
-		void bind(const CnetworkNode& node)
+		bool bind(const CnetworkNode& node)
 		{
 			m_lock.lock();
-			m_pendingBind.insert(node);
+			try
+			{
+				m_pendingBind.insert(node);
+			}
+			catch (...)
+			{
+				m_lock.unlock();
+				return false;
+			}
 			m_lock.unlock();
 			uv_async_send(m_wakeup->getAsync());
+			return true;
 		}
 
-		void send(const CnetworkNode& node, const void *data, const size_t length, const bool bAutoConnect = false)
+		bool send(const CnetworkNode& node, const void *data, const size_t length, const bool bAutoConnect = false)
 		{
-			__pending_send temp(m_memoryTrace, node, data, length, bAutoConnect);
+			if (0 == length)
+				return true;
+			if (nullptr == data)
+				return false;
+			try
+			{
+				__pending_send temp(m_memoryTrace, node, data, length, bAutoConnect);
+				m_lock.lock();
+				try
+				{
+					m_pendingSend.push_back(__pending_send(m_memoryTrace));
+				}
+				catch (...)
+				{
+					m_lock.unlock();
+					return false;
+				}
+				std::swap(m_pendingSend.back(), temp);
+				m_lock.unlock();
+				uv_async_send(m_wakeup->getAsync());
+				return true;
+			}
+			catch (...)
+			{
+				return false;
+			}
+		}
+
+		bool close(const CnetworkNode& node, const bool bForceClose = false)
+		{
 			m_lock.lock();
-			m_pendingSend.push_back(__pending_send(m_memoryTrace));
-			std::swap(m_pendingSend.back(), temp);
+			try
+			{
+				m_pendingClose.insert(std::make_pair(node, bForceClose));
+			}
+			catch (...)
+			{
+				m_lock.unlock();
+				return false;
+			}
 			m_lock.unlock();
-			uv_async_send(m_wakeup->getAsync());
+			return true;
 		}
 	};
 }
