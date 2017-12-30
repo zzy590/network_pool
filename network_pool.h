@@ -101,7 +101,7 @@ namespace NETWORK_POOL
 
 			__pending_send(const __pending_send& another) = delete;
 			__pending_send(__pending_send&& another)
-				:m_node(std::move(another.m_node)), m_data(std::move(another.m_data)), m_bAutoConnect(m_bAutoConnect) {}
+				:m_node(std::move(another.m_node)), m_data(std::move(another.m_data)), m_bAutoConnect(another.m_bAutoConnect) {}
 
 			const __pending_send& operator=(const __pending_send& another) = delete;
 			const __pending_send& operator=(__pending_send&& another)
