@@ -294,7 +294,7 @@ namespace NETWORK_POOL
 		CnetworkPool *pool = Casync::obtain(async)->getPool();
 		// Copy pending to local first.
 		std::unordered_map<CnetworkNode, bool, __network_hash> bindCopy;
-		std::list<CnetworkPool::__pending_send> sendCopy;
+		std::deque<CnetworkPool::__pending_send> sendCopy;
 		std::unordered_map<CnetworkNode, bool, __network_hash> closeCopy;
 		{
 			std::lock_guard<std::mutex> guard(pool->m_lock);
@@ -546,10 +546,7 @@ namespace NETWORK_POOL
 		data.transfer(buf);
 		auto it = m_waitingSend.find(node);
 		if (it == m_waitingSend.end())
-		{
-			std::vector<uv_buf_t> vec(1, buf);
-			m_waitingSend.insert(std::make_pair(node, vec));
-		}
+			m_waitingSend.insert(std::make_pair(node, std::vector<uv_buf_t>(1, buf)));
 		else
 			it->second.push_back(buf);
 	}

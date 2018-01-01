@@ -2,7 +2,7 @@
 #pragma once
 
 #include <vector>
-#include <list>
+#include <deque>
 #include <unordered_set>
 #include <unordered_map>
 #include <thread>
@@ -112,7 +112,7 @@ namespace NETWORK_POOL
 				return *this;
 			}
 		};
-		std::list<__pending_send> m_pendingSend;
+		std::deque<__pending_send> m_pendingSend;
 		std::unordered_map<CnetworkNode, bool, __network_hash> m_pendingClose;
 		
 		//
