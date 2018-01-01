@@ -296,14 +296,15 @@ namespace NETWORK_POOL
 		std::unordered_map<CnetworkNode, bool, __network_hash> bindCopy;
 		std::list<CnetworkPool::__pending_send> sendCopy;
 		std::unordered_map<CnetworkNode, bool, __network_hash> closeCopy;
-		pool->m_lock.lock();
-		bindCopy = std::move(pool->m_pendingBind);
-		sendCopy = std::move(pool->m_pendingSend);
-		closeCopy = std::move(pool->m_pendingClose);
-		pool->m_pendingBind.clear();
-		pool->m_pendingSend.clear();
-		pool->m_pendingClose.clear();
-		pool->m_lock.unlock();
+		{
+			std::lock_guard<std::mutex> guard(pool->m_lock);
+			bindCopy = std::move(pool->m_pendingBind);
+			sendCopy = std::move(pool->m_pendingSend);
+			closeCopy = std::move(pool->m_pendingClose);
+			pool->m_pendingBind.clear();
+			pool->m_pendingSend.clear();
+			pool->m_pendingClose.clear();
+		}
 		if (pool->m_bWantExit)
 		{
 			//

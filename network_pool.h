@@ -183,67 +183,35 @@ namespace NETWORK_POOL
 			return m_memoryTrace;
 		}
 		
-		bool bind(const CnetworkNode& node, const bool bBind = true)
+		void bind(const CnetworkNode& node, const bool bBind = true)
 		{
-			m_lock.lock();
-			try
 			{
+				std::lock_guard<std::mutex> guard(m_lock);
 				m_pendingBind.insert(std::make_pair(node, bBind));
 			}
-			catch (...)
-			{
-				m_lock.unlock();
-				return false;
-			}
-			m_lock.unlock();
 			uv_async_send(m_wakeup->getAsync());
-			return true;
 		}
 
-		bool send(const CnetworkNode& node, const void *data, const size_t length, const bool bAutoConnect = false)
+		void send(const CnetworkNode& node, const void *data, const size_t length, const bool bAutoConnect = false)
 		{
-			if (0 == length)
-				return true;
-			if (nullptr == data)
-				return false;
-			try
+			if (0 == length || nullptr == data)
+				return;
+			__pending_send temp(m_memoryTrace, node, data, length, bAutoConnect);
 			{
-				__pending_send temp(m_memoryTrace, node, data, length, bAutoConnect);
-				m_lock.lock();
-				try
-				{
-					m_pendingSend.push_back(__pending_send(m_memoryTrace));
-				}
-				catch (...)
-				{
-					m_lock.unlock();
-					return false;
-				}
+				std::lock_guard<std::mutex> guard(m_lock);
+				m_pendingSend.push_back(__pending_send(m_memoryTrace));
 				m_pendingSend.back() = std::move(temp);
-				m_lock.unlock();
-				uv_async_send(m_wakeup->getAsync());
-				return true;
 			}
-			catch (...)
-			{
-				return false;
-			}
+			uv_async_send(m_wakeup->getAsync());
 		}
 
-		bool close(const CnetworkNode& node, const bool bForceClose = false)
+		void close(const CnetworkNode& node, const bool bForceClose = false)
 		{
-			m_lock.lock();
-			try
 			{
+				std::lock_guard<std::mutex> guard(m_lock);
 				m_pendingClose.insert(std::make_pair(node, bForceClose));
 			}
-			catch (...)
-			{
-				m_lock.unlock();
-				return false;
-			}
-			m_lock.unlock();
-			return true;
+			uv_async_send(m_wakeup->getAsync());
 		}
 	};
 }

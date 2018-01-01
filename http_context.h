@@ -103,7 +103,7 @@ namespace NETWORK_POOL
 
 		void init(const size_t maxBufferSize = 0x1000000) // 16MB
 		{
-			m_maxBufferSize = maxBufferSize;
+			m_maxBufferSize = maxBufferSize > 0x1000 ? maxBufferSize : 0x1000;
 
 			m_buffer.resize(0x1000); // 4KB
 			m_nowIndex = 0;
@@ -373,7 +373,7 @@ namespace NETWORK_POOL
 			return true;
 		}
 
-		bool reinitForNext(const size_t maxBufferSize = 0x1000000) // 16MB
+		bool reinitForNext()
 		{
 			if (m_state != state_done || !m_bKeepAlive)
 				return false;
@@ -385,8 +385,6 @@ namespace NETWORK_POOL
 			m_nowIndex = extra;
 
 			// Set others.
-			m_maxBufferSize = maxBufferSize;
-
 			m_analysisIndex = 0;
 
 			m_state = state_start;

@@ -70,13 +70,9 @@ namespace NETWORK_POOL
 								"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
 								"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
 								"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789");
-							if (m_pool->send(node, resp.c_str(), resp.length()))
-							{
-								if (ctx.reinitForNext())
-									goto _again;
-								else
-									m_pool->close(node);
-							}
+							m_pool->send(node, resp.c_str(), resp.length());
+							if (ctx.reinitForNext())
+								goto _again;
 							else
 								m_pool->close(node);
 						}
