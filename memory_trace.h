@@ -36,6 +36,7 @@ namespace NETWORK_POOL
 	public:
 		CmemoryTrace() :m_size(0), m_count(0) {}
 
+		// No copy, no move.
 		CmemoryTrace(const CmemoryTrace& another) = delete;
 		CmemoryTrace(CmemoryTrace&& another) = delete;
 		const CmemoryTrace& operator=(const CmemoryTrace& another) = delete;

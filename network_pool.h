@@ -193,6 +193,12 @@ namespace NETWORK_POOL
 			m_memoryTrace._delete_set_nullptr<std::thread>(m_thread);
 		}
 
+		// No copy, no move.
+		CnetworkPool(const CnetworkPool& another) = delete;
+		CnetworkPool(CnetworkPool&& another) = delete;
+		const CnetworkPool& operator=(const CnetworkPool& another) = delete;
+		const CnetworkPool& operator=(CnetworkPool&& another) = delete;
+
 		inline const __preferred_network_settings& getSettings() const
 		{
 			return m_settings;

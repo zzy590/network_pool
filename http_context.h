@@ -38,8 +38,8 @@ namespace NETWORK_POOL
 
 		Cbuffer m_buffer;
 		size_t m_nowIndex;
-		size_t m_analysisIndex;
 
+		size_t m_analysisIndex;
 		enum __http_state
 		{
 			state_start = 0,
@@ -127,8 +127,8 @@ namespace NETWORK_POOL
 
 			m_buffer.resize(0x1000); // 4KB
 			m_nowIndex = 0;
-			m_analysisIndex = 0;
 
+			m_analysisIndex = 0;
 			m_state = state_start;
 			m_lines.clear();
 			m_lines.reserve(16);
@@ -406,7 +406,6 @@ namespace NETWORK_POOL
 
 			// Set others.
 			m_analysisIndex = 0;
-
 			m_state = state_start;
 			m_lines.clear();
 			m_lines.reserve(16);
