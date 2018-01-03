@@ -212,7 +212,7 @@ namespace NETWORK_POOL
 		void bind(const CnetworkNode& node, const bool bBind = true)
 		{
 			{
-				std::lock_guard<std::mutex> guard(m_lock);
+				std::lock_guard<std::mutex> guard(m_lock); // Use guard in case of exception.
 				m_pendingBind.insert(std::make_pair(node, bBind));
 			}
 			uv_async_send(m_wakeup->getAsync());
@@ -224,9 +224,8 @@ namespace NETWORK_POOL
 				return;
 			__pending_send temp(m_memoryTrace, node, data, length, bAutoConnect);
 			{
-				std::lock_guard<std::mutex> guard(m_lock);
-				m_pendingSend.push_back(__pending_send(m_memoryTrace));
-				m_pendingSend.back() = std::move(temp);
+				std::lock_guard<std::mutex> guard(m_lock); // Use guard in case of exception.
+				m_pendingSend.push_back(std::move(temp));
 			}
 			uv_async_send(m_wakeup->getAsync());
 		}
@@ -234,7 +233,7 @@ namespace NETWORK_POOL
 		void close(const CnetworkNode& node, const bool bForceClose = false)
 		{
 			{
-				std::lock_guard<std::mutex> guard(m_lock);
+				std::lock_guard<std::mutex> guard(m_lock); // Use guard in case of exception.
 				m_pendingClose.insert(std::make_pair(node, bForceClose));
 			}
 			uv_async_send(m_wakeup->getAsync());

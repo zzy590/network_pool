@@ -54,6 +54,8 @@ namespace NETWORK_POOL
 			:m_protocol(protocol_tcp), m_port(0), m_hash(0) {} // All zero and hash is 0.
 		CnetworkNode(const protocol_type protocol, const std::string& ip, const unsigned short port)
 			:m_protocol(protocol), m_ip(ip), m_port(port) { rehash(); }
+		CnetworkNode(const protocol_type protocol, std::string&& ip, const unsigned short port)
+			:m_protocol(protocol), m_ip(ip), m_port(port) { rehash(); }
 		CnetworkNode(const CnetworkNode& another)
 			:m_protocol(another.m_protocol), m_ip(another.m_ip), m_port(another.m_port), m_hash(another.m_hash) {}
 		CnetworkNode(CnetworkNode&& another)
@@ -102,14 +104,14 @@ namespace NETWORK_POOL
 			return m_hash != another.m_hash || m_protocol != another.m_protocol || m_port != another.m_port || m_ip != another.m_ip; // For performance, compare IP at end.
 		}
 
-		inline void set(const CnetworkNode& another)
-		{
-			m_protocol = another.m_protocol;
-			m_ip = another.m_ip;
-			m_port = another.m_port;
-			m_hash = another.m_hash;
-		}
 		inline void set(const protocol_type protocol, const std::string& ip, const unsigned short port)
+		{
+			m_protocol = protocol;
+			m_ip = ip;
+			m_port = port;
+			rehash();
+		}
+		inline void set(const protocol_type protocol, std::string&& ip, const unsigned short port)
 		{
 			m_protocol = protocol;
 			m_ip = ip;
@@ -122,6 +124,11 @@ namespace NETWORK_POOL
 			rehash();
 		}
 		inline void setIp(const std::string& ip)
+		{
+			m_ip = ip;
+			rehash();
+		}
+		inline void setIp(const std::string&& ip)
 		{
 			m_ip = ip;
 			rehash();
@@ -173,6 +180,12 @@ namespace NETWORK_POOL
 		CnetworkPair() :m_hash(0) {} // All zero and hash is 0.
 		CnetworkPair(const CnetworkNode& local, const CnetworkNode& remote)
 			:m_local(local), m_remote(remote) { rehash(); }
+		CnetworkPair(CnetworkNode&& local, const CnetworkNode& remote)
+			:m_local(local), m_remote(remote) { rehash(); }
+		CnetworkPair(const CnetworkNode& local, CnetworkNode&& remote)
+			:m_local(local), m_remote(remote) { rehash(); }
+		CnetworkPair(CnetworkNode&& local, CnetworkNode&& remote)
+			:m_local(local), m_remote(remote) { rehash(); }
 		CnetworkPair(const CnetworkPair& another)
 			:m_local(another.m_local), m_remote(another.m_remote), m_hash(another.m_hash) {}
 		CnetworkPair(CnetworkPair&& another)
@@ -212,20 +225,23 @@ namespace NETWORK_POOL
 		{
 			return m_hash != another.m_hash || m_remote != another.m_remote || m_local != another.m_local; // Compare remote address(usually different).
 		}
-
-		inline void set(const CnetworkPair& another)
-		{
-			m_local = another.m_local;
-			m_remote = another.m_remote;
-			m_hash = another.m_hash;
-		}
-
+		
 		inline void setLocal(const CnetworkNode& local)
 		{
 			m_local = local;
 			rehash();
 		}
+		inline void setLocal(CnetworkNode&& local)
+		{
+			m_local = local;
+			rehash();
+		}
 		inline void setRemote(const CnetworkNode& remote)
+		{
+			m_remote = remote;
+			rehash();
+		}
+		inline void setRemote(CnetworkNode&& remote)
 		{
 			m_remote = remote;
 			rehash();

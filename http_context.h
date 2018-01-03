@@ -61,7 +61,7 @@ namespace NETWORK_POOL
 		bool m_bChunkSizeDone;
 		vector<pair<size_t, size_t>> m_chunks; // <startIndex, length>
 
-		#ifndef _WIN32
+		#ifndef _MSC_VER
 			#define _stricmp strcasecmp
 		#endif
 

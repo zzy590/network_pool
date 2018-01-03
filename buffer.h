@@ -41,7 +41,7 @@ namespace NETWORK_POOL
 		inline void transfer(uv_buf_t& buf) // Internal use only.
 		{
 			buf.base = (char *)m_data;
-		#ifdef _WIN32
+		#ifdef _MSC_VER
 			buf.len = (ULONG)m_length;
 		#else
 			buf.len = m_length;
@@ -140,23 +140,6 @@ namespace NETWORK_POOL
 			another.m_data = nullptr;
 			another.m_maxLength = another.m_length = 0;
 			return *this;
-		}
-
-		inline void set(const Cbuffer& another)
-		{
-			if (another.m_length <= m_maxLength)
-			{
-				if (another.m_length > 0)
-					memcpy(m_data, another.m_data, another.m_length);
-				m_length = another.m_length;
-			}
-			else
-			{
-				m_trace->_free_set_nullptr(m_data); // No need to check nullptr.
-				m_data = m_trace->_malloc_throw(another.m_length);
-				memcpy(m_data, another.m_data, another.m_length);
-				m_maxLength = m_length = another.m_length;
-			}
 		}
 
 		inline void set(const void *data, const size_t length)

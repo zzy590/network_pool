@@ -90,8 +90,6 @@ namespace NETWORK_POOL
 		CnetworkPool *m_pool;
 		CnetworkNode m_node;
 
-		friend void on_close_tcp(uv_handle_t *handle);
-		friend void on_close_tcp_timer(uv_handle_t *handle);
 		friend class CmemoryTrace;
 
 	public:

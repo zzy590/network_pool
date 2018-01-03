@@ -40,7 +40,7 @@ namespace NETWORK_POOL
 		size_t length = 0;
 		tcp->getPool()->m_callback.allocateMemoryForMessage(tcp->getNode(), suggested_size, buffer, length);
 		buf->base = (char *)buffer;
-	#ifdef _WIN32
+	#ifdef _MSC_VER
 		buf->len = (ULONG)length;
 	#else
 		buf->len = length;
@@ -226,7 +226,7 @@ namespace NETWORK_POOL
 			NP_FPRINTF((stderr, "Bind and listen tcp error with insufficient memory.\n"));
 			return nullptr;
 		}
-		server->getNode().set(node);
+		server->getNode() = node;
 		if (node.isIPv6())
 		{
 			sockaddr_in6 addr;
@@ -276,7 +276,7 @@ namespace NETWORK_POOL
 			pool->getMemoryTrace()._free_set_nullptr(connect);
 			return nullptr;
 		}
-		tcp->getNode().set(node);
+		tcp->getNode() = node;
 		// Set timeout.
 		on_error_goto_ec(
 			uv_timer_start(tcp->getTimer(), on_tcp_timeout, pool->getSettings().tcp_connect_timeout_in_seconds * 1000, 0),
@@ -313,18 +313,15 @@ namespace NETWORK_POOL
 	{
 		CnetworkPool *pool = Casync::obtain(async)->getPool();
 		// Copy pending to local first.
-		std::unordered_map<CnetworkNode, bool, __network_hash> bindCopy;
-		std::deque<CnetworkPool::__pending_send> sendCopy;
-		std::unordered_map<CnetworkNode, bool, __network_hash> closeCopy;
-		{
-			std::lock_guard<std::mutex> guard(pool->m_lock);
-			bindCopy = std::move(pool->m_pendingBind);
-			sendCopy = std::move(pool->m_pendingSend);
-			closeCopy = std::move(pool->m_pendingClose);
-			pool->m_pendingBind.clear();
-			pool->m_pendingSend.clear();
-			pool->m_pendingClose.clear();
-		}
+		pool->m_lock.lock(); // Just use lock and unlock, because we never get exception here(fatal error).
+		std::unordered_map<CnetworkNode, bool, __network_hash> bindCopy(std::move(pool->m_pendingBind));
+		std::deque<CnetworkPool::__pending_send> sendCopy(std::move(pool->m_pendingSend));
+		std::unordered_map<CnetworkNode, bool, __network_hash> closeCopy(std::move(pool->m_pendingClose));
+		pool->m_pendingBind.clear();
+		pool->m_pendingSend.clear();
+		pool->m_pendingClose.clear();
+		pool->m_lock.unlock();
+		// Deal with request(s).
 		if (pool->m_bWantExit)
 		{
 			//
