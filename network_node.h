@@ -225,7 +225,7 @@ namespace NETWORK_POOL
 		{
 			return m_hash != another.m_hash || m_remote != another.m_remote || m_local != another.m_local; // Compare remote address(usually different).
 		}
-		
+
 		inline void setLocal(const CnetworkNode& local)
 		{
 			m_local = local;
