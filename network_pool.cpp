@@ -578,7 +578,7 @@ namespace NETWORK_POOL
 		auto it = m_waitingSend.find(node);
 		if (it == m_waitingSend.end())
 			return nullptr;
-		CnetworkPool::__write_with_info *writeInfo = (CnetworkPool::__write_with_info *)m_memoryTrace._malloc_no_throw(sizeof(CnetworkPool::__write_with_info) + sizeof(uv_buf_t)*(it->second.size() - 1));
+		__write_with_info *writeInfo = (__write_with_info *)m_memoryTrace._malloc_no_throw(sizeof(__write_with_info) + sizeof(uv_buf_t)*(it->second.size() - 1));
 		if (nullptr == writeInfo)
 		{
 			// Insufficient memory.
