@@ -173,7 +173,10 @@ namespace NETWORK_POOL
 				tcp->m_pool->getMemoryTrace()._free_set_nullptr(req);
 				close_set_nullptr(tcp);
 			}) != 0)
+			{
+				tcp->m_pool->getMemoryTrace()._free_set_nullptr(shutdown);
 				goto _ec;
+			}
 			tcp->m_shutdown = true;
 		}
 		tcp = nullptr;

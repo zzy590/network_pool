@@ -192,7 +192,7 @@ namespace NETWORK_POOL
 		pool->m_connecting.erase(tcp);
 		pool->getMemoryTrace()._free_set_nullptr(req);
 		// Error?
-		if (status < 0 || tcp->isClosing()) // Closing may happen when free pool with the connect not complete.
+		if (status < 0 || tcp->isClosing()) // Closing may happen when deleting the pool with the connecting not completed.
 			goto_ec((stderr, "Connect tcp error %s.\n", uv_strerror(status)));
 		// Set timeout.
 		on_error_goto_ec(
