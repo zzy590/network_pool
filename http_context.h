@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <utility>
 
 #include "memory_trace.h"
 #include "buffer.h"
@@ -51,7 +52,7 @@ namespace NETWORK_POOL
 			state_done,
 			state_bad
 		} m_state;
-		vector<pair<size_t, size_t>> m_lines; // <startIndex, length>
+		std::vector<std::pair<size_t, size_t>> m_lines; // <startIndex, length>
 		size_t m_headerSize;
 		bool m_bKeepAlive;
 		bool m_bChunked;
@@ -59,13 +60,13 @@ namespace NETWORK_POOL
 		size_t m_nowChunkSize;
 		bool m_bChunkSizeStart;
 		bool m_bChunkSizeDone;
-		vector<pair<size_t, size_t>> m_chunks; // <startIndex, length>
+		std::vector<std::pair<size_t, size_t>> m_chunks; // <startIndex, length>
 
 		#ifndef _MSC_VER
 			#define _stricmp strcasecmp
 		#endif
 
-		void kvDecoder(const string& name, const string& value)
+		void kvDecoder(const std::string& name, const std::string& value)
 		{
 			if (0 == _stricmp("Connection", name.c_str()))
 				m_bKeepAlive = 0 == _stricmp("Keep-Alive", value.c_str());
@@ -101,7 +102,7 @@ namespace NETWORK_POOL
 					continue;
 				while (isspace(*(value_tail - 1)))
 					--value_tail;
-				kvDecoder(string(name_head, name_tail - name_head), string(value_head, value_tail - value_head));
+				kvDecoder(std::string(name_head, name_tail - name_head), std::string(value_head, value_tail - value_head));
 			}
 			// Switch state.
 			if (m_bChunked)
@@ -326,7 +327,7 @@ namespace NETWORK_POOL
 
 		// For request. (method, uri, version)
 		// For response. (version, code, status)
-		bool getInfo(string& first, string& second, string& thrid) const
+		bool getInfo(std::string& first, std::string& second, std::string& thrid) const
 		{
 			if (m_state != state_done)
 				return false;
@@ -343,7 +344,7 @@ namespace NETWORK_POOL
 			return true;
 		}
 
-		bool getParameter(unordered_multimap<string, string>& parameters) const
+		bool getParameter(std::unordered_multimap<std::string, std::string>& parameters) const
 		{
 			if (m_state != state_done)
 				return false;
@@ -369,7 +370,7 @@ namespace NETWORK_POOL
 					continue;
 				while (isspace(*(value_tail - 1)))
 					--value_tail;
-				parameters.insert(make_pair(string(name_head, name_tail - name_head), string(value_head, value_tail - value_head)));
+				parameters.insert(std::make_pair(std::string(name_head, name_tail - name_head), std::string(value_head, value_tail - value_head)));
 			}
 			return true;
 		}

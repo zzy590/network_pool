@@ -87,6 +87,7 @@ namespace NETWORK_POOL
 		bool m_tcpInited;
 		bool m_timerInited;
 		bool m_closing;
+		bool m_shutdown;
 		CnetworkPool *m_pool;
 		CnetworkNode m_node;
 
@@ -95,6 +96,9 @@ namespace NETWORK_POOL
 	public:
 		static Ctcp *alloc(CnetworkPool *pool, uv_loop_t *loop, bool initTimer = true);
 		static void close_set_nullptr(Ctcp *& tcp);
+
+		// Wait send finish, shutdown and close.
+		static void shutdown_and_close_set_nullptr(Ctcp *& tcp);
 
 		static inline Ctcp *obtainFromTcp(uv_handle_t *handle)
 		{
@@ -141,6 +145,10 @@ namespace NETWORK_POOL
 		inline bool isClosing() const
 		{
 			return m_closing;
+		}
+		inline bool isShutdown() const
+		{
+			return m_shutdown;
 		}
 	};
 

@@ -53,7 +53,7 @@ namespace NETWORK_POOL
 		tcp->getPool()->shutdownTcpConnection_set_nullptr(tcp);
 	}
 
-	// This function should be called at last and the tcp ***MUST*** be no closing.
+	// This function should be called at last and the tcp ***MUST*** be no closing and no shutdown.
 	// Note: It will shutdown tcp if set timer fail.
 	void reset_tcp_idle_timeout_may_set_nullptr(Ctcp *& tcp)
 	{
@@ -76,7 +76,7 @@ namespace NETWORK_POOL
 			pool->m_callback.message(tcp->getNode(), buf->base, nread);
 			pool->m_callback.deallocateMemoryForMessage(tcp->getNode(), buf->base, buf->len);
 			// Reset idle close.
-			if (!tcp->isClosing())
+			if (!tcp->isClosing() && !tcp->isShutdown())
 				reset_tcp_idle_timeout_may_set_nullptr(tcp);
 		}
 		else
@@ -106,13 +106,8 @@ namespace NETWORK_POOL
 			// Shutdown connection.
 			pool->shutdownTcpConnection_set_nullptr(tcp);
 		}
-		else if (!tcp->isClosing())
-		{
-			if (0 == tcp->getStream()->write_queue_size && pool->m_waitingClose.find(tcp) != pool->m_waitingClose.end())
-				pool->shutdownTcpConnection_set_nullptr(tcp);
-			else
-				reset_tcp_idle_timeout_may_set_nullptr(tcp);
-		}
+		else if (!tcp->isClosing() && !tcp->isShutdown())
+			reset_tcp_idle_timeout_may_set_nullptr(tcp);
 		// Free write buffer.
 		for (size_t i = 0; i < writeInfo->num; ++i)
 			pool->getMemoryTrace()._free_set_nullptr(writeInfo->buf[i].base);
@@ -197,7 +192,7 @@ namespace NETWORK_POOL
 		pool->m_connecting.erase(tcp);
 		pool->getMemoryTrace()._free_set_nullptr(req);
 		// Error?
-		if (status < 0 || tcp->isClosing())
+		if (status < 0 || tcp->isClosing()) // Closing may happen when free pool with the connect not complete.
 			goto_ec((stderr, "Connect tcp error %s.\n", uv_strerror(status)));
 		// Set timeout.
 		on_error_goto_ec(
@@ -314,9 +309,9 @@ namespace NETWORK_POOL
 		CnetworkPool *pool = Casync::obtain(async)->getPool();
 		// Copy pending to local first.
 		pool->m_lock.lock(); // Just use lock and unlock, because we never get exception here(fatal error).
-		std::unordered_map<CnetworkNode, bool, __network_hash> bindCopy(std::move(pool->m_pendingBind));
+		std::deque<std::pair<CnetworkNode, bool>> bindCopy(std::move(pool->m_pendingBind));
 		std::deque<CnetworkPool::__pending_send> sendCopy(std::move(pool->m_pendingSend));
-		std::unordered_map<CnetworkNode, bool, __network_hash> closeCopy(std::move(pool->m_pendingClose));
+		std::deque<std::pair<CnetworkNode, bool>> closeCopy(std::move(pool->m_pendingClose));
 		pool->m_pendingBind.clear();
 		pool->m_pendingSend.clear();
 		pool->m_pendingClose.clear();
@@ -386,8 +381,6 @@ namespace NETWORK_POOL
 				}
 			}
 			pool->m_waitingSend.clear();
-			// Clear close flag.
-			pool->m_waitingClose.clear();
 			// Drop all pending bind & message.
 			for (const auto& pair : bindCopy)
 				pool->m_callback.bindStatus(pair.first, false);
@@ -526,10 +519,11 @@ namespace NETWORK_POOL
 				Ctcp *tcp = pool->getStreamByNode(node);
 				if (tcp != nullptr)
 				{
-					if (bForceClose || 0 == tcp->getStream()->write_queue_size)
+					// No force close means shutdown, and it's a type of send.
+					if (!bForceClose && uv_timer_start(tcp->getTimer(), on_tcp_timeout, pool->getSettings().tcp_send_timeout_in_seconds * 1000, 0) != 0)
 						pool->shutdownTcpConnection_set_nullptr(tcp);
-					else
-						pool->m_waitingClose.insert(tcp);
+					else // Timer still working until close, so timeout when shutdown will force close the connection.
+						pool->shutdownTcpConnection_set_nullptr(tcp, false, !bForceClose);
 				}
 			}
 		}
@@ -638,17 +632,19 @@ namespace NETWORK_POOL
 	}
 
 	// This function is idempotent, and can be called any time when tcp is valid(closing is also ok).
-	inline void CnetworkPool::shutdownTcpConnection_set_nullptr(Ctcp *& tcp, bool bAlwaysNotify)
+	inline void CnetworkPool::shutdownTcpConnection_set_nullptr(Ctcp *& tcp, bool bAlwaysNotify, bool bShutdown)
 	{
-		// Clean flag set & map.
-		m_waitingClose.erase(tcp);
+		// Clean map.
 		auto sz = m_node2stream.erase(tcp->getNode());
 		if (sz > 0 || bAlwaysNotify)
 			m_callback.connectionStatus(tcp->getNode(), false); // Report connection down.
 		// Drop message notify.
 		dropWaiting(tcp->getNode());
 		// Close connection.
-		Ctcp::close_set_nullptr(tcp);
+		if (bShutdown)
+			Ctcp::shutdown_and_close_set_nullptr(tcp);
+		else
+			Ctcp::close_set_nullptr(tcp);
 	}
 
 	void CnetworkPool::internalThread()

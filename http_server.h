@@ -45,7 +45,7 @@ namespace NETWORK_POOL
 	private:
 		CmemoryTrace& m_memoryTrace;
 
-		unordered_map<CnetworkNode, ChttpContext, __network_hash> m_context;
+		std::unordered_map<CnetworkNode, ChttpContext, __network_hash> m_context;
 		CnetworkPool *m_pool;
 
 	public:
@@ -78,12 +78,12 @@ namespace NETWORK_POOL
 				{
 					if (ctx.isGood())
 					{
-						string method, uri, version;
+						std::string method, uri, version;
 						ctx.getInfo(method, uri, version);
 						NP_FPRINTF((stdout, "http req: \'%s\' \'%s\'.\n", method.c_str(), uri.c_str()));
 						if (m_pool != nullptr)
 						{
-							static const string resp("HTTP/1.1 200 OK\r\nContent-Length: 600\r\n\r\n"
+							static const std::string resp("HTTP/1.1 200 OK\r\nContent-Length: 600\r\n\r\n"
 								"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
 								"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
 								"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
@@ -117,7 +117,7 @@ namespace NETWORK_POOL
 			NP_FPRINTF((stdout, "connection: from-[%s]:%u %s.\n", node.getIp().c_str(), node.getPort(), bSuccess ? "success" : "fail"));
 			if (bSuccess)
 			{
-				auto ib = m_context.insert(make_pair(node, ChttpContext(m_memoryTrace)));
+				auto ib = m_context.insert(std::make_pair(node, ChttpContext(m_memoryTrace)));
 				ib.first->second.init();
 			}
 			else

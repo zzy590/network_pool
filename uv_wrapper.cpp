@@ -56,7 +56,7 @@ namespace NETWORK_POOL
 					[](uv_handle_t *handle)
 				{
 					Casync *async = Casync::obtain(handle);
-					async->getPool()->getMemoryTrace()._delete_set_nullptr<Casync>(async);
+					async->m_pool->getMemoryTrace()._delete_set_nullptr<Casync>(async);
 				});
 				async->m_closing = true;
 			}
@@ -105,6 +105,7 @@ namespace NETWORK_POOL
 		tcp->m_tcpInited = false;
 		tcp->m_timerInited = false;
 		tcp->m_closing = false;
+		tcp->m_shutdown = false;
 		tcp->m_pool = pool;
 		if (uv_tcp_init(loop, &tcp->m_tcp) != 0)
 			goto _ec;
@@ -137,7 +138,7 @@ namespace NETWORK_POOL
 					Ctcp *tcp = Ctcp::obtainFromTcp(handle);
 					tcp->m_tcpInited = false;
 					if (!tcp->m_timerInited)
-						tcp->getPool()->getMemoryTrace()._delete_set_nullptr<Ctcp>(tcp);
+						tcp->m_pool->getMemoryTrace()._delete_set_nullptr<Ctcp>(tcp);
 				});
 				if (tcp->m_timerInited)
 					uv_close((uv_handle_t *)&tcp->m_timer,
@@ -146,7 +147,7 @@ namespace NETWORK_POOL
 					Ctcp *tcp = Ctcp::obtainFromTimer(handle);
 					tcp->m_timerInited = false;
 					if (!tcp->m_tcpInited)
-						tcp->getPool()->getMemoryTrace()._delete_set_nullptr<Ctcp>(tcp);
+						tcp->m_pool->getMemoryTrace()._delete_set_nullptr<Ctcp>(tcp);
 				});
 				tcp->m_closing = true;
 			}
@@ -154,6 +155,31 @@ namespace NETWORK_POOL
 		}
 		else
 			tcp->m_pool->getMemoryTrace()._delete_set_nullptr<Ctcp>(tcp);
+	}
+
+	void Ctcp::shutdown_and_close_set_nullptr(Ctcp *& tcp)
+	{
+		if (!tcp->m_tcpInited)
+			goto _ec;
+		if (!tcp->m_closing && !tcp->m_shutdown)
+		{
+			uv_shutdown_t *shutdown = (uv_shutdown_t *)tcp->m_pool->getMemoryTrace()._malloc_no_throw(sizeof(uv_shutdown_t));
+			if (nullptr == shutdown)
+				goto _ec;
+			if (uv_shutdown(shutdown, (uv_stream_t *)&tcp->m_tcp,
+				[](uv_shutdown_t *req, int status)
+			{
+				Ctcp *tcp = Ctcp::obtain(req->handle);
+				tcp->m_pool->getMemoryTrace()._free_set_nullptr(req);
+				close_set_nullptr(tcp);
+			}) != 0)
+				goto _ec;
+			tcp->m_shutdown = true;
+		}
+		tcp = nullptr;
+		return;
+	_ec:
+		close_set_nullptr(tcp);
 	}
 
 	//
@@ -187,7 +213,7 @@ namespace NETWORK_POOL
 					[](uv_handle_t *handle)
 				{
 					Cudp *udp = Cudp::obtain(handle);
-					udp->getPool()->getMemoryTrace()._delete_set_nullptr<Cudp>(udp);
+					udp->m_pool->getMemoryTrace()._delete_set_nullptr<Cudp>(udp);
 				});
 				udp->m_closing = true;
 			}

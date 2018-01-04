@@ -25,8 +25,9 @@
 #include <deque>
 #include <unordered_set>
 #include <unordered_map>
-#include <thread>
 #include <mutex>
+#include <thread>
+#include <utility>
 
 #include "uv.h"
 
@@ -88,14 +89,13 @@ namespace NETWORK_POOL
 			uv_buf_t buf[1]; // Need free when complete request.
 		};
 
-		enum __internal_state
+		// Status of internal thread.
+		volatile enum __internal_state
 		{
 			initializing = 0,
 			good,
 			bad
-		};
-		// Status of internal thread.
-		volatile __internal_state m_state;
+		} m_state;
 
 		__preferred_network_settings m_settings;
 		CmemoryTrace& m_memoryTrace;
@@ -107,7 +107,7 @@ namespace NETWORK_POOL
 
 		// Data which exchanged between internal and external.
 		std::mutex m_lock;
-		std::unordered_map<CnetworkNode, bool, __network_hash> m_pendingBind;
+		std::deque<std::pair<CnetworkNode, bool>> m_pendingBind;
 		struct __pending_send
 		{
 			CnetworkNode m_node;
@@ -133,7 +133,7 @@ namespace NETWORK_POOL
 			}
 		};
 		std::deque<__pending_send> m_pendingSend;
-		std::unordered_map<CnetworkNode, bool, __network_hash> m_pendingClose;
+		std::deque<std::pair<CnetworkNode, bool>> m_pendingClose;
 		
 		//
 		// Following data must be accessed by internal thread.
@@ -150,7 +150,6 @@ namespace NETWORK_POOL
 		std::unordered_map<CnetworkNode, Ctcp *, __network_hash> m_node2stream;
 		std::unordered_set<Ctcp *> m_connecting;
 		std::unordered_map<CnetworkNode, std::vector<uv_buf_t>, __network_hash> m_waitingSend; // Waiting for connection complete.
-		std::unordered_set<Ctcp *> m_waitingClose; // Waiting for sending complete and close.
 
 		friend void tcp_alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf);
 		friend void on_tcp_timeout(uv_timer_t *handle);
@@ -170,7 +169,7 @@ namespace NETWORK_POOL
 		// Caution! Call following function(s) may cause iterator of m_node2stream and m_waitingSend invalid.
 		//          Following function(s) may set nullptr to tcp.
 		inline void startupTcpConnection_may_set_nullptr(Ctcp *& tcp);
-		inline void shutdownTcpConnection_set_nullptr(Ctcp *& tcp, bool bAlwaysNotify = false);
+		inline void shutdownTcpConnection_set_nullptr(Ctcp *& tcp, bool bAlwaysNotify = false, bool bShutdown = false);
 
 		void internalThread();
 
@@ -211,9 +210,10 @@ namespace NETWORK_POOL
 		
 		void bind(const CnetworkNode& node, const bool bBind = true)
 		{
+			auto&& pair = std::make_pair(node, bBind);
 			{
 				std::lock_guard<std::mutex> guard(m_lock); // Use guard in case of exception.
-				m_pendingBind.insert(std::make_pair(node, bBind));
+				m_pendingBind.push_back(pair);
 			}
 			uv_async_send(m_wakeup->getAsync());
 		}
@@ -230,11 +230,14 @@ namespace NETWORK_POOL
 			uv_async_send(m_wakeup->getAsync());
 		}
 
+		// It waits for pending write requests to complete if bForceClose == false.
+		// Or close immediately if bForceClose == true.
 		void close(const CnetworkNode& node, const bool bForceClose = false)
 		{
+			auto&& pair = std::make_pair(node, bForceClose);
 			{
 				std::lock_guard<std::mutex> guard(m_lock); // Use guard in case of exception.
-				m_pendingClose.insert(std::make_pair(node, bForceClose));
+				m_pendingClose.push_back(pair);
 			}
 			uv_async_send(m_wakeup->getAsync());
 		}
