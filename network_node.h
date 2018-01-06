@@ -21,10 +21,328 @@
 
 #pragma once
 
+#include <cstring>
 #include <string>
+#include <utility>
+
+#include "uv.h"
 
 namespace NETWORK_POOL
 {
+	class Csockaddr
+	{
+	private:
+		union __sockaddr_mix
+		{
+			unsigned short family;
+			sockaddr_in sockaddr4;
+			sockaddr_in6 sockaddr6;
+		} m_sockaddr;
+
+	public:
+		inline void init()
+		{
+			m_sockaddr.family = 0;
+		}
+
+		inline bool init(const sockaddr *raw, const size_t size)
+		{
+			if (size < 8) // family+port+ipv4
+			{
+				init();
+				return false;
+			}
+			else
+			{
+				switch (raw->sa_family)
+				{
+				case AF_INET:
+				{ // Size checked before.
+					const sockaddr_in *in4 = (const sockaddr_in *)raw;
+					m_sockaddr.sockaddr4.sin_family = AF_INET;
+					m_sockaddr.sockaddr4.sin_port = in4->sin_port;
+					uint32_t *addr0 = (uint32_t *)&m_sockaddr.sockaddr4.sin_addr;
+					uint32_t *addr1 = (uint32_t *)&in4->sin_addr;
+					*addr0 = *addr1;
+				}
+					break;
+
+				case AF_INET6:
+					if (size < sizeof(sockaddr_in6))
+					{
+						init();
+						return false;
+					}
+					else
+					{
+						const sockaddr_in6 *in6 = (const sockaddr_in6 *)raw;
+						m_sockaddr.sockaddr6.sin6_family = AF_INET6;
+						m_sockaddr.sockaddr6.sin6_port = in6->sin6_port;
+						uint32_t *addr0 = (uint32_t *)&m_sockaddr.sockaddr6.sin6_addr;
+						uint32_t *addr1 = (uint32_t *)&in6->sin6_addr;
+						for (int i = 0; i < 4; ++i)
+							addr0[i] = addr1[i];
+						m_sockaddr.sockaddr6.sin6_flowinfo = in6->sin6_flowinfo;
+						m_sockaddr.sockaddr6.sin6_scope_id = in6->sin6_scope_id;
+					}
+					break;
+
+				default:
+					init();
+					return false;
+				}
+			}
+			return true;
+		}
+
+		inline bool init(const char *ip, const unsigned short port)
+		{
+			if (strchr(ip, ':') == nullptr) // IPv4.
+			{
+				if (uv_ip4_addr(ip, port, &m_sockaddr.sockaddr4) != 0)
+				{
+					init();
+					return false;
+				}
+			}
+			else // IPv6.
+			{
+				if (uv_ip6_addr(ip, port, &m_sockaddr.sockaddr6) != 0)
+				{
+					init();
+					return false;
+				}
+			}
+			return true;
+		}
+
+		inline bool init(const Csockaddr& another)
+		{
+			switch (another.m_sockaddr.family)
+			{
+			case AF_INET:
+			{
+				m_sockaddr.sockaddr4.sin_family = AF_INET;
+				m_sockaddr.sockaddr4.sin_port = another.m_sockaddr.sockaddr4.sin_port;
+				uint32_t *addr0 = (uint32_t *)&m_sockaddr.sockaddr4.sin_addr;
+				uint32_t *addr1 = (uint32_t *)&another.m_sockaddr.sockaddr4.sin_addr;
+				*addr0 = *addr1;
+			}
+			break;
+
+			case AF_INET6:
+			{
+				m_sockaddr.sockaddr6.sin6_family = AF_INET6;
+				m_sockaddr.sockaddr6.sin6_port = another.m_sockaddr.sockaddr6.sin6_port;
+				uint32_t *addr0 = (uint32_t *)&m_sockaddr.sockaddr6.sin6_addr;
+				uint32_t *addr1 = (uint32_t *)&another.m_sockaddr.sockaddr6.sin6_addr;
+				for (int i = 0; i < 4; ++i)
+					addr0[i] = addr1[i];
+				m_sockaddr.sockaddr6.sin6_flowinfo = another.m_sockaddr.sockaddr6.sin6_flowinfo;
+				m_sockaddr.sockaddr6.sin6_scope_id = another.m_sockaddr.sockaddr6.sin6_scope_id;
+			}
+			break;
+
+			default:
+				init();
+				return false;
+			}
+			return true;
+		}
+
+		Csockaddr()
+		{
+			init();
+		}
+		Csockaddr(const sockaddr *raw, const size_t size)
+		{
+			init(raw, size);
+		}
+		Csockaddr(const char *ip, const unsigned short port)
+		{
+			init(ip, port);
+		}
+		Csockaddr(const Csockaddr& another)
+		{
+			init(another);
+		}
+		Csockaddr(Csockaddr&& another)
+		{
+			init(another);
+		}
+
+		const Csockaddr& operator=(const Csockaddr& another)
+		{
+			init(another);
+			return *this;
+		}
+		const Csockaddr& operator=(Csockaddr&& another)
+		{
+			init(another);
+			return *this;
+		}
+
+		bool operator<(const Csockaddr& another) const
+		{
+			if (m_sockaddr.family != another.m_sockaddr.family)
+				return m_sockaddr.family < another.m_sockaddr.family;
+			switch (m_sockaddr.family)
+			{
+			case AF_INET:
+			{
+				if (m_sockaddr.sockaddr4.sin_port != another.m_sockaddr.sockaddr4.sin_port)
+					return m_sockaddr.sockaddr4.sin_port < another.m_sockaddr.sockaddr4.sin_port;
+				uint32_t *addr0 = (uint32_t *)&m_sockaddr.sockaddr4.sin_addr;
+				uint32_t *addr1 = (uint32_t *)&another.m_sockaddr.sockaddr4.sin_addr;
+				return *addr0 < *addr1;
+			}
+			break;
+
+			case AF_INET6:
+			{
+				if (m_sockaddr.sockaddr6.sin6_port != another.m_sockaddr.sockaddr6.sin6_port)
+					return m_sockaddr.sockaddr6.sin6_port < another.m_sockaddr.sockaddr6.sin6_port;
+				uint32_t *addr0 = (uint32_t *)&m_sockaddr.sockaddr6.sin6_addr;
+				uint32_t *addr1 = (uint32_t *)&another.m_sockaddr.sockaddr6.sin6_addr;
+				for (int i = 0; i < 4; ++i)
+				{
+					if (addr0[i] != addr1[i])
+						return addr0[i] < addr1[i];
+				}
+				if (m_sockaddr.sockaddr6.sin6_flowinfo != another.m_sockaddr.sockaddr6.sin6_flowinfo)
+					return m_sockaddr.sockaddr6.sin6_flowinfo < another.m_sockaddr.sockaddr6.sin6_flowinfo;
+				return m_sockaddr.sockaddr6.sin6_scope_id < another.m_sockaddr.sockaddr6.sin6_scope_id;
+			}
+			break;
+
+			default:
+				return false;
+			}
+		}
+
+		bool operator==(const Csockaddr& another) const
+		{
+			if (m_sockaddr.family != another.m_sockaddr.family)
+				return false;
+			switch (m_sockaddr.family)
+			{
+			case AF_INET:
+			{
+				if (m_sockaddr.sockaddr4.sin_port != another.m_sockaddr.sockaddr4.sin_port)
+					return false;
+				uint32_t *addr0 = (uint32_t *)&m_sockaddr.sockaddr4.sin_addr;
+				uint32_t *addr1 = (uint32_t *)&another.m_sockaddr.sockaddr4.sin_addr;
+				return *addr0 == *addr1;
+			}
+			break;
+
+			case AF_INET6:
+			{
+				if (m_sockaddr.sockaddr6.sin6_port != another.m_sockaddr.sockaddr6.sin6_port)
+					return false;
+				uint32_t *addr0 = (uint32_t *)&m_sockaddr.sockaddr6.sin6_addr;
+				uint32_t *addr1 = (uint32_t *)&another.m_sockaddr.sockaddr6.sin6_addr;
+				for (int i = 0; i < 4; ++i)
+				{
+					if (addr0[i] != addr1[i])
+						return false;
+				}
+				if (m_sockaddr.sockaddr6.sin6_flowinfo != another.m_sockaddr.sockaddr6.sin6_flowinfo)
+					return false;
+				return m_sockaddr.sockaddr6.sin6_scope_id == another.m_sockaddr.sockaddr6.sin6_scope_id;
+			}
+			break;
+
+			default:
+				return true;
+			}
+		}
+
+		bool operator!=(const Csockaddr& another) const
+		{
+			return !operator==(another);
+		}
+
+		inline const sockaddr *getSockaddr() const
+		{
+			return (const sockaddr *)&m_sockaddr;
+		}
+
+		inline size_t getHash(size_t hash) const
+		{
+			switch (m_sockaddr.family)
+			{
+			case AF_INET:
+				hash += *(uint32_t *)&m_sockaddr.sockaddr4.sin_addr;
+				hash = (hash << 16) | m_sockaddr.sockaddr4.sin_port;
+				break;
+
+			case AF_INET6:
+			{
+				uint32_t *addr = (uint32_t *)&m_sockaddr.sockaddr6.sin6_addr;
+				hash += addr[0];
+				hash = hash * 0xFFFF + addr[1];
+				hash = hash * 0xFFFF + addr[2];
+				hash = hash * 0xFFFF + addr[3];
+				hash = (hash << 16) | m_sockaddr.sockaddr6.sin6_port;
+			}
+			break;
+
+			default:
+				hash += m_sockaddr.family;
+				break;
+			}
+			return hash;
+		}
+
+		inline std::string getIp() const
+		{
+			char ip[64];
+			switch (m_sockaddr.family)
+			{
+			case AF_INET:
+				if (uv_ip4_name(&m_sockaddr.sockaddr4, ip, sizeof(ip)) != 0)
+					ip[0] = 0;
+				break;
+
+			case AF_INET6:
+				if (uv_ip6_name(&m_sockaddr.sockaddr6, ip, sizeof(ip)) != 0)
+					ip[0] = 0;
+				break;
+
+			default:
+				ip[0] = 0;
+				break;
+			}
+			return std::string(ip);
+		}
+
+		inline unsigned short getPort() const
+		{
+			switch (m_sockaddr.family)
+			{
+			case AF_INET:
+				return ntohs(m_sockaddr.sockaddr4.sin_port);
+
+			case AF_INET6:
+				return ntohs(m_sockaddr.sockaddr6.sin6_port);
+
+			default:
+				return 0;
+			}
+		}
+
+		inline bool isIpv6() const
+		{
+			return m_sockaddr.family == AF_INET6;
+		}
+
+		inline bool valid() const
+		{
+			return AF_INET == m_sockaddr.family || AF_INET6 == m_sockaddr.family;
+		}
+	};
+
 	class CnetworkNode
 	{
 	public:
@@ -36,130 +354,86 @@ namespace NETWORK_POOL
 
 	private:
 		protocol_type m_protocol;
-		std::string m_ip;
-		unsigned short m_port;
+		Csockaddr m_sockaddr;
 
 		size_t m_hash;
 
 		inline void rehash()
 		{
-			m_hash = m_protocol;
-			for (const auto& val : m_ip)
-				m_hash = 31 * m_hash + val;
-			m_hash = (m_hash << 16) + m_port;
+			m_hash = m_sockaddr.getHash(m_protocol * 31);
 		}
 
 	public:
 		CnetworkNode()
-			:m_protocol(protocol_tcp), m_port(0), m_hash(0) {} // All zero and hash is 0.
-		CnetworkNode(const protocol_type protocol, const std::string& ip, const unsigned short port)
-			:m_protocol(protocol), m_ip(ip), m_port(port) { rehash(); }
-		CnetworkNode(const protocol_type protocol, std::string&& ip, const unsigned short port)
-			:m_protocol(protocol), m_ip(ip), m_port(port) { rehash(); }
+			:m_protocol(protocol_tcp), m_hash(0) {} // All zero and hash is 0.
+		CnetworkNode(const protocol_type protocol, const sockaddr *raw, const size_t size)
+			:m_protocol(protocol), m_sockaddr(raw, size) { rehash(); }
+		CnetworkNode(const protocol_type protocol, const char *ip, const unsigned short port)
+			:m_protocol(protocol), m_sockaddr(ip, port) { rehash(); }
 		CnetworkNode(const CnetworkNode& another)
-			:m_protocol(another.m_protocol), m_ip(another.m_ip), m_port(another.m_port), m_hash(another.m_hash) {}
-		CnetworkNode(CnetworkNode&& another)
-			:m_protocol(another.m_protocol), m_ip(std::move(another.m_ip)), m_port(another.m_port), m_hash(another.m_hash)
-		{
-			another.m_protocol = protocol_tcp;
-			another.m_port = 0;
-			another.m_hash = 0;
-		}
+			:m_protocol(another.m_protocol), m_sockaddr(another.m_sockaddr), m_hash(another.m_hash) {}
+		CnetworkNode(CnetworkNode&& another) // Move is copy, and another.m_hash will not change.
+			:m_protocol(another.m_protocol), m_sockaddr(std::move(another.m_sockaddr)), m_hash(another.m_hash) {}
 
 		const CnetworkNode& operator=(const CnetworkNode& another)
 		{
 			m_protocol = another.m_protocol;
-			m_ip = another.m_ip;
-			m_port = another.m_port;
+			m_sockaddr = another.m_sockaddr;
 			m_hash = another.m_hash;
 			return *this;
 		}
-		const CnetworkNode& operator=(CnetworkNode&& another)
+		const CnetworkNode& operator=(CnetworkNode&& another) // Move is copy, and another.m_hash will not change.
 		{
 			m_protocol = another.m_protocol;
-			m_ip = std::move(another.m_ip);
-			m_port = another.m_port;
+			m_sockaddr = another.m_sockaddr;
 			m_hash = another.m_hash;
-			another.m_protocol = protocol_tcp;
-			another.m_port = 0;
-			another.m_hash = 0;
 			return *this;
 		}
+
 		bool operator<(const CnetworkNode& another) const
 		{
 			if (m_hash != another.m_hash)
 				return m_hash < another.m_hash;
 			if (m_protocol != another.m_protocol)
 				return m_protocol < another.m_protocol;
-			if (m_port != another.m_port)
-				return m_port < another.m_port;
-			return m_ip < another.m_ip; // For performance, compare IP at end.
+			return m_sockaddr < another.m_sockaddr;
 		}
 		bool operator==(const CnetworkNode& another) const
 		{
-			return m_hash == another.m_hash && m_protocol == another.m_protocol && m_port == another.m_port && m_ip == another.m_ip; // For performance, compare IP at end.
+			return m_hash == another.m_hash && m_protocol == another.m_protocol && m_sockaddr == another.m_sockaddr;
 		}
 		bool operator!=(const CnetworkNode& another) const
 		{
-			return m_hash != another.m_hash || m_protocol != another.m_protocol || m_port != another.m_port || m_ip != another.m_ip; // For performance, compare IP at end.
+			return !operator==(another);
 		}
 
-		inline void set(const protocol_type protocol, const std::string& ip, const unsigned short port)
+		inline bool set(const protocol_type protocol, const sockaddr *raw, const size_t size)
 		{
 			m_protocol = protocol;
-			m_ip = ip;
-			m_port = port;
+			bool bRet = m_sockaddr.init(raw, size);
 			rehash();
+			return bRet;
 		}
-		inline void set(const protocol_type protocol, std::string&& ip, const unsigned short port)
+		inline bool set(const protocol_type protocol, const char *ip, const unsigned short port)
 		{
 			m_protocol = protocol;
-			m_ip = ip;
-			m_port = port;
+			bool bRet = m_sockaddr.init(ip, port);
 			rehash();
-		}
-		inline void setProtocol(const protocol_type protocol)
-		{
-			m_protocol = protocol;
-			rehash();
-		}
-		inline void setIp(const std::string& ip)
-		{
-			m_ip = ip;
-			rehash();
-		}
-		inline void setIp(const std::string&& ip)
-		{
-			m_ip = ip;
-			rehash();
-		}
-		inline void setPort(const unsigned short port)
-		{
-			m_port = port;
-			rehash();
+			return bRet;
 		}
 
 		inline protocol_type getProtocol() const
 		{
 			return m_protocol;
 		}
-		inline const std::string& getIp() const
+		inline const Csockaddr& getSockaddr() const
 		{
-			return m_ip;
-		}
-		inline unsigned short getPort() const
-		{
-			return m_port;
+			return m_sockaddr;
 		}
 
 		inline size_t getHash() const
 		{
 			return m_hash;
-		}
-
-		inline bool isIPv6() const
-		{
-			return m_ip.find(':') != std::string::npos;
 		}
 	};
 
@@ -188,11 +462,8 @@ namespace NETWORK_POOL
 			:m_local(local), m_remote(remote) { rehash(); }
 		CnetworkPair(const CnetworkPair& another)
 			:m_local(another.m_local), m_remote(another.m_remote), m_hash(another.m_hash) {}
-		CnetworkPair(CnetworkPair&& another)
-			:m_local(std::move(another.m_local)), m_remote(std::move(another.m_remote)), m_hash(another.m_hash)
-		{
-			another.m_hash = 0;
-		}
+		CnetworkPair(CnetworkPair&& another) // Move is copy, and another.m_hash will not change.
+			:m_local(std::move(another.m_local)), m_remote(std::move(another.m_remote)), m_hash(another.m_hash) {}
 
 		const CnetworkPair& operator=(const CnetworkPair& another)
 		{
@@ -201,12 +472,11 @@ namespace NETWORK_POOL
 			m_hash = another.m_hash;
 			return *this;
 		}
-		const CnetworkPair& operator=(CnetworkPair&& another)
+		const CnetworkPair& operator=(CnetworkPair&& another) // Move is copy, and another.m_hash will not change.
 		{
 			m_local = std::move(another.m_local);
 			m_remote = std::move(another.m_remote);
 			m_hash = another.m_hash;
-			another.m_hash = 0;
 			return *this;
 		}
 		bool operator<(const CnetworkPair& another) const
@@ -223,7 +493,7 @@ namespace NETWORK_POOL
 		}
 		bool operator!=(const CnetworkPair& another) const
 		{
-			return m_hash != another.m_hash || m_remote != another.m_remote || m_local != another.m_local; // Compare remote address(usually different).
+			return !operator==(another);
 		}
 
 		inline void setLocal(const CnetworkNode& local)

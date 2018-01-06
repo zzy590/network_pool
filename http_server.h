@@ -22,7 +22,9 @@
 #pragma once
 
 #include <unordered_map>
+#include <mutex>
 
+#include "work_queue.h"
 #include "network_callback.h"
 #include "memory_trace.h"
 #include "http_context.h"
@@ -40,6 +42,38 @@
 
 namespace NETWORK_POOL
 {
+	class ChttpServer;
+
+	class ChttpTask : public Ctask
+	{
+	private:
+		ChttpServer& m_server;
+		bool m_canceled;
+
+		CnetworkNode m_node;
+		ChttpContext m_context;
+
+	public:
+		ChttpTask(CmemoryTrace& memoryTrace, ChttpServer& server, const CnetworkNode& node);
+		~ChttpTask();
+
+		const CnetworkNode& getNode() const
+		{
+			return m_node;
+		}
+		ChttpContext& getContext()
+		{
+			return m_context;
+		}
+
+		void cancel()
+		{
+			m_canceled = true;
+		}
+
+		void run();
+	};
+
 	class ChttpServer : public CnetworkPoolCallback
 	{
 	private:
@@ -48,19 +82,54 @@ namespace NETWORK_POOL
 		std::unordered_map<CnetworkNode, ChttpContext, __network_hash> m_context;
 		CnetworkPool *m_pool;
 
+		std::mutex m_taskLock;
+		std::unordered_multimap<CnetworkNode, ChttpTask *, __network_hash> m_tasks;
+
+		CworkQueue m_workQueue;
+
 	public:
-		ChttpServer(CmemoryTrace& memoryTrace) :m_memoryTrace(memoryTrace), m_pool(nullptr) {}
+		ChttpServer(CmemoryTrace& memoryTrace, const size_t nThread)
+			:m_memoryTrace(memoryTrace), m_pool(nullptr), m_workQueue(nThread) {}
 
 		void setNetworkPool(CnetworkPool *pool)
 		{
 			m_pool = pool;
+		}
+		CnetworkPool *getNetworkPool() const
+		{
+			return m_pool;
+		}
+
+		void addReferenceTask(ChttpTask *task)
+		{
+			std::lock_guard<std::mutex> guard(m_taskLock);
+			m_tasks.insert(std::make_pair(task->getNode(), task));
+		}
+		void deleteReferenceTask(ChttpTask *task)
+		{
+			std::lock_guard<std::mutex> guard(m_taskLock);
+			for (auto it = m_tasks.lower_bound(task->getNode()); it != m_tasks.upper_bound(task->getNode()); ++it)
+			{
+				if (it->second == task)
+				{
+					m_tasks.erase(it);
+					break;
+				}
+			}
+		}
+
+		void cancelTask(const CnetworkNode& node)
+		{
+			std::lock_guard<std::mutex> guard(m_taskLock);
+			for (auto it = m_tasks.lower_bound(node); it != m_tasks.upper_bound(node); ++it)
+				it->second->cancel();
 		}
 
 		void allocateMemoryForMessage(const CnetworkNode& node, size_t suggestedSize, void *& buffer, size_t& lenght)
 		{
 			auto it = m_context.find(node);
 			if (it != m_context.end())
-				it->second.getBuffer(buffer, lenght);
+				it->second.prepareBuffer(buffer, lenght);
 		}
 		void deallocateMemoryForMessage(const CnetworkNode& node, void *buffer, size_t lenght)
 		{
@@ -78,24 +147,10 @@ namespace NETWORK_POOL
 				{
 					if (ctx.isGood())
 					{
-						std::string method, uri, version;
-						ctx.getInfo(method, uri, version);
-						NP_FPRINTF((stdout, "http req: \'%s\' \'%s\'.\n", method.c_str(), uri.c_str()));
-						if (m_pool != nullptr)
-						{
-							static const std::string resp("HTTP/1.1 200 OK\r\nContent-Length: 600\r\n\r\n"
-								"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
-								"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
-								"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
-								"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
-								"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
-								"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789");
-							m_pool->send(node, resp.c_str(), resp.length());
-							if (ctx.reinitForNext())
-								goto _again;
-							else
-								m_pool->close(node);
-						}
+						ChttpTask *task = new ChttpTask(m_memoryTrace, *this, node);
+						ctx.reinitForNext(task->getContext());
+						m_workQueue.pushTask(task);
+						goto _again;
 					}
 					else if (m_pool != nullptr)
 						m_pool->close(node);
@@ -105,23 +160,23 @@ namespace NETWORK_POOL
 
 		void drop(const CnetworkNode& node, const void *data, const size_t length)
 		{
-			NP_FPRINTF((stdout, "pkt drop: [%s]:%u.\n", node.getIp().c_str(), node.getPort()));
+			NP_FPRINTF((stdout, "pkt drop: [%s]:%u.\n", node.getSockaddr().getIp().c_str(), node.getSockaddr().getPort()));
 		}
 
 		void bindStatus(const CnetworkNode& node, const bool bSuccess)
 		{
-			NP_FPRINTF((stdout, "bind: [%s]:%u %s.\n", node.getIp().c_str(), node.getPort(), bSuccess ? "success" : "fail"));
+			NP_FPRINTF((stdout, "bind: [%s]:%u %s.\n", node.getSockaddr().getIp().c_str(), node.getSockaddr().getPort(), bSuccess ? "success" : "fail"));
 		}
 		void connectionStatus(const CnetworkNode& node, const bool bSuccess)
 		{
-			NP_FPRINTF((stdout, "connection: from-[%s]:%u %s.\n", node.getIp().c_str(), node.getPort(), bSuccess ? "success" : "fail"));
+			NP_FPRINTF((stdout, "connection: from-[%s]:%u %s.\n", node.getSockaddr().getIp().c_str(), node.getSockaddr().getPort(), bSuccess ? "success" : "fail"));
 			if (bSuccess)
-			{
-				auto ib = m_context.insert(std::make_pair(node, ChttpContext(m_memoryTrace)));
-				ib.first->second.init();
-			}
+				m_context.insert(std::make_pair(node, ChttpContext(m_memoryTrace)));
 			else
+			{
 				m_context.erase(node);
+				cancelTask(node);
+			}
 		}
 	};
 }

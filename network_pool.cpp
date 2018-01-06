@@ -148,24 +148,8 @@ namespace NETWORK_POOL
 		on_error_goto_ec(
 			uv_tcp_getpeername(clientTcp->getTcp(), (sockaddr *)&peer, &len),
 			(stderr, "New incoming connection tcp getpeername error.\n"));
-		char ip[64];
-		switch (peer.ss_family)
-		{
-		case AF_INET:
-			on_error_goto_ec(
-				uv_ip4_name((sockaddr_in *)&peer, ip, sizeof(ip)),
-				(stderr, "New incoming connection tcp ipv4 name error.\n"));
-			clientTcp->getNode().set(CnetworkNode::protocol_tcp, ip, ntohs(((sockaddr_in *)&peer)->sin_port));
-			break;
-		case AF_INET6:
-			on_error_goto_ec(
-				uv_ip6_name((sockaddr_in6 *)&peer, ip, sizeof(ip)),
-				(stderr, "New incoming connection tcp ipv6 name error.\n"));
-			clientTcp->getNode().set(CnetworkNode::protocol_tcp, ip, ntohs(((sockaddr_in6 *)&peer)->sin6_port));
-			break;
-		default:
-			goto_ec((stderr, "New incoming connection tcp unknown peer ss_family.\n"));
-		}
+		if (!clientTcp->getNode().set(CnetworkNode::protocol_tcp, (const sockaddr *)&peer, len))
+			goto_ec((stderr, "New incoming connection tcp set node error.\n"));
 		// Do the port reuse check.
 		if (pool->getStreamByNode(clientTcp->getNode()) != nullptr)
 			goto_ec((stderr, "New incoming connection tcp remote port reuse.\n"));
@@ -222,26 +206,9 @@ namespace NETWORK_POOL
 			return nullptr;
 		}
 		server->getNode() = node;
-		if (node.isIPv6())
-		{
-			sockaddr_in6 addr;
-			on_error_goto_ec(
-				uv_ip6_addr(node.getIp().c_str(), node.getPort(), &addr),
-				(stderr, "Bind and listen tcp ipv6 addr error.\n"));
-			on_error_goto_ec(
-				uv_tcp_bind(server->getTcp(), (const sockaddr *)&addr, 0),
-				(stderr, "Bind and listen tcp bind error.\n"));
-		}
-		else
-		{
-			sockaddr_in addr;
-			on_error_goto_ec(
-				uv_ip4_addr(node.getIp().c_str(), node.getPort(), &addr),
-				(stderr, "Bind and listen tcp ipv4 addr error.\n"));
-			on_error_goto_ec(
-				uv_tcp_bind(server->getTcp(), (const sockaddr *)&addr, 0),
-				(stderr, "Bind and listen tcp bind error.\n"));
-		}
+		on_error_goto_ec(
+			uv_tcp_bind(server->getTcp(), server->getNode().getSockaddr().getSockaddr(), 0),
+			(stderr, "Bind and listen tcp bind error.\n"));
 		on_error_goto_ec(
 			uv_listen(server->getStream(), pool->getSettings().tcp_backlog, on_new_connection),
 			(stderr, "Bind and listen tcp listen error.\n"));
@@ -277,26 +244,9 @@ namespace NETWORK_POOL
 			uv_timer_start(tcp->getTimer(), on_tcp_timeout, pool->getSettings().tcp_connect_timeout_in_seconds * 1000, 0),
 			(stderr, "Connect tcp timer start error.\n"));
 		// Connect.
-		if (node.isIPv6())
-		{
-			sockaddr_in6 addr;
-			on_error_goto_ec(
-				uv_ip6_addr(node.getIp().c_str(), node.getPort(), &addr),
-				(stderr, "Connect tcp ipv6 addr error.\n"));
-			on_error_goto_ec(
-				uv_tcp_connect(connect, tcp->getTcp(), (const sockaddr *)&addr, on_connect_done),
-				(stderr, "Connect tcp connect error.\n"));
-		}
-		else
-		{
-			sockaddr_in addr;
-			on_error_goto_ec(
-				uv_ip4_addr(node.getIp().c_str(), node.getPort(), &addr),
-				(stderr, "Connect tcp ipv4 addr error.\n"));
-			on_error_goto_ec(
-				uv_tcp_connect(connect, tcp->getTcp(), (const sockaddr *)&addr, on_connect_done),
-				(stderr, "Connect tcp connect error.\n"));
-		}
+		on_error_goto_ec(
+			uv_tcp_connect(connect, tcp->getTcp(), tcp->getNode().getSockaddr().getSockaddr(), on_connect_done),
+			(stderr, "Connect tcp connect error.\n"));
 		return tcp;
 	_ec:
 		pool->getMemoryTrace()._free_set_nullptr(connect);
@@ -596,7 +546,7 @@ namespace NETWORK_POOL
 
 	inline void CnetworkPool::startupTcpConnection_may_set_nullptr(Ctcp *& tcp)
 	{
-		if (tcp->getNode().getIp().empty())
+		if (!tcp->getNode().getSockaddr().valid())
 		{
 			// WTF to get here? The only thing we can do is just close it.
 			NP_FPRINTF((stderr, "Fatal error startup a connection whithout node.\n"));

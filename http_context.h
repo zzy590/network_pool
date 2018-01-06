@@ -62,18 +62,43 @@ namespace NETWORK_POOL
 		bool m_bChunkSizeDone;
 		std::vector<std::pair<size_t, size_t>> m_chunks; // <startIndex, length>
 
+		void init()
+		{
+			if (0 == m_buffer.getLength())
+			{
+				if (m_maxBufferSize < 0x1000)
+					m_maxBufferSize = 0x1000;
+
+				m_buffer.resize(0x1000); // 4KB
+				m_nowIndex = 0;
+
+				m_analysisIndex = 0;
+				m_state = state_start;
+				m_lines.clear();
+				m_lines.reserve(16);
+				m_headerSize = 0;
+				m_bKeepAlive = false;
+				m_bChunked = false;
+				m_contentLength = 0;
+				m_nowChunkSize = 0;
+				m_bChunkSizeStart = false;
+				m_bChunkSizeDone = false;
+				m_chunks.clear();
+			}
+		}
+
 		#ifndef _MSC_VER
-			#define _stricmp strcasecmp
+			#define _strnicmp strcasencmp
 		#endif
 
-		void kvDecoder(const std::string& name, const std::string& value)
+		void kvDecoder(const char *name, const size_t nameLength, const char *value, const size_t valueLength)
 		{
-			if (0 == _stricmp("Connection", name.c_str()))
-				m_bKeepAlive = 0 == _stricmp("Keep-Alive", value.c_str());
-			else if (0 == _stricmp("Content-Length", name.c_str()))
-				m_contentLength = atoi(value.c_str());
-			else if (0 == _stricmp("Transfer-Encoding", name.c_str()))
-				m_bChunked = 0 == _stricmp("chunked", value.c_str());
+			if (10 == nameLength && 0 == _strnicmp("Connection", name, 10))
+				m_bKeepAlive = (10 == valueLength && 0 == _strnicmp("Keep-Alive", value, 10));
+			else if (14 == nameLength && 0 == _strnicmp("Content-Length", name, 14))
+				m_contentLength = atoi(value); // Each line will have null-terminator so it's safe to do it.
+			else if (17 == nameLength && 0 == _strnicmp("Transfer-Encoding", name, 17))
+				m_bChunked = (7 == valueLength && 0 == _strnicmp("chunked", value, 7));
 		}
 
 		void decoderHeaderAndUpdateState()
@@ -102,7 +127,7 @@ namespace NETWORK_POOL
 					continue;
 				while (isspace(*(value_tail - 1)))
 					--value_tail;
-				kvDecoder(std::string(name_head, name_tail - name_head), std::string(value_head, value_tail - value_head));
+				kvDecoder(name_head, name_tail - name_head, value_head, value_tail - value_head);
 			}
 			// Switch state.
 			if (m_bChunked)
@@ -119,32 +144,12 @@ namespace NETWORK_POOL
 		}
 
 	public:
-		ChttpContext(CmemoryTrace& memoryTrace)
-			:m_buffer(&memoryTrace) {}
+		ChttpContext(CmemoryTrace& memoryTrace, const size_t maxBufferSize = 0x1000000) // 16MB
+			:m_buffer(&memoryTrace), m_maxBufferSize(maxBufferSize) {}
 
-		void init(const size_t maxBufferSize = 0x1000000) // 16MB
+		void prepareBuffer(void *& buffer, size_t& length)
 		{
-			m_maxBufferSize = maxBufferSize > 0x1000 ? maxBufferSize : 0x1000;
-
-			m_buffer.resize(0x1000); // 4KB
-			m_nowIndex = 0;
-
-			m_analysisIndex = 0;
-			m_state = state_start;
-			m_lines.clear();
-			m_lines.reserve(16);
-			m_headerSize = 0;
-			m_bKeepAlive = false;
-			m_bChunked = false;
-			m_contentLength = 0;
-			m_nowChunkSize = 0;
-			m_bChunkSizeStart = false;
-			m_bChunkSizeDone = false;
-			m_chunks.clear();
-		}
-
-		void getBuffer(void *& buffer, size_t& length)
-		{
+			init();
 			if (m_buffer.getLength() - m_nowIndex < 0x800) // 2KB
 			{
 				if (m_buffer.getLength() * 2 > m_maxBufferSize)
@@ -325,6 +330,11 @@ namespace NETWORK_POOL
 			return m_state == state_done;
 		}
 
+		bool isKeepAlive() const
+		{
+			return m_bKeepAlive;
+		}
+
 		// For request. (method, uri, version)
 		// For response. (version, code, status)
 		bool getInfo(std::string& first, std::string& second, std::string& thrid) const
@@ -394,10 +404,28 @@ namespace NETWORK_POOL
 			return true;
 		}
 
-		bool reinitForNext()
+		bool reinitForNext(ChttpContext& former)
 		{
-			if (m_state != state_done || !m_bKeepAlive)
+			if (m_state != state_done)
 				return false;
+
+			// Move current to former.
+			former.m_maxBufferSize = m_maxBufferSize;
+
+			former.m_buffer.set(m_buffer.getData(), m_analysisIndex);
+			former.m_nowIndex = m_analysisIndex;
+
+			former.m_analysisIndex = m_analysisIndex;
+			former.m_state = state_done;
+			former.m_lines = std::move(m_lines);
+			former.m_headerSize = m_headerSize;
+			former.m_bKeepAlive = m_bKeepAlive;
+			former.m_bChunked = m_bChunked;
+			former.m_contentLength = m_contentLength;
+			former.m_nowChunkSize = 0;
+			former.m_bChunkSizeStart = false;
+			former.m_bChunkSizeDone = false;
+			former.m_chunks = std::move(m_chunks);
 
 			// Move extra.
 			size_t extra = m_nowIndex - m_analysisIndex;
