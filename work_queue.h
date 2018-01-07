@@ -26,6 +26,8 @@
 #include <mutex>
 #include <condition_variable>
 #include <thread>
+#include <functional>
+#include <utility>
 
 namespace NETWORK_POOL
 {
@@ -45,9 +47,9 @@ namespace NETWORK_POOL
 		std::mutex m_lock;
 		bool m_exit;
 		std::condition_variable m_cv;
-		std::deque<Ctask *> m_tasks;
+		std::deque<std::pair<Ctask *, std::function<void(Ctask *)>>> m_tasks;
 
-		Ctask *getTask()
+		bool getNext(Ctask *& task, std::function<void(Ctask *)>& deleter)
 		{
 			std::unique_lock<std::mutex> lck(m_lock);
 			while (!m_exit)
@@ -56,23 +58,26 @@ namespace NETWORK_POOL
 					m_cv.wait(lck);
 				else
 				{
-					Ctask *task = m_tasks.front();
+					auto& front = m_tasks.front();
+					task = front.first;
+					deleter = std::move(front.second);
 					m_tasks.pop_front();
-					return task;
+					return true;
 				}
 			}
-			return nullptr;
+			return false;
 		}
 
 		void worker()
 		{
+			Ctask * task = nullptr;
+			std::function<void(Ctask *)> deleter;
 			while (true)
 			{
-				Ctask *task = getTask();
-				if (nullptr == task)
+				if (!getNext(task,deleter))
 					break;
 				task->run();
-				delete task;
+				deleter(task);
 			}
 		}
 
@@ -105,8 +110,8 @@ namespace NETWORK_POOL
 			setExit();
 			for (auto& thread : m_threads)
 				thread.join();
-			for (auto& task : m_tasks)
-				delete task;
+			for (auto& pair : m_tasks)
+				pair.second(pair.first);
 		}
 
 		// No copy, no move.
@@ -115,10 +120,10 @@ namespace NETWORK_POOL
 		const CworkQueue& operator=(const CworkQueue& another) = delete;
 		const CworkQueue& operator=(CworkQueue&& another) = delete;
 
-		void pushTask(Ctask *task)
+		void pushTask(Ctask *task, std::function<void(Ctask *)>&& deleter)
 		{
 			std::unique_lock<std::mutex> lck(m_lock);
-			m_tasks.push_back(task);
+			m_tasks.push_back(std::make_pair(task, deleter));
 			m_cv.notify_one();
 		}
 	};

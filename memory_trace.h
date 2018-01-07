@@ -55,7 +55,7 @@ namespace NETWORK_POOL
 		// Following function(s) are internal used only.
 		//
 
-		inline void *_malloc_throw(size_t sz)
+		inline void *_malloc_throw(const size_t sz)
 		{
 			size_t allocSize = sizeof(size_t) + sz;
 			if (allocSize < sz) // In case of overflow.
@@ -73,7 +73,7 @@ namespace NETWORK_POOL
 			return (size_t *)ptr + 1;
 		}
 
-		inline void *_malloc_no_throw(size_t sz)
+		inline void *_malloc_no_throw(const size_t sz)
 		{
 			size_t allocSize = sizeof(size_t) + sz;
 			if (allocSize < sz) // In case of overflow.
@@ -110,18 +110,18 @@ namespace NETWORK_POOL
 		}
 
 		template<class T, class... Args>
-		inline T *_new_throw(Args... args)
+		inline T *_new_throw(Args&&... args)
 		{
-			T *obj = new T(args...); // May throw.
+			T *obj = new T(std::forward<Args>(args)...); // May throw.
 			m_size += sizeof(T);
 			++m_count;
 			return obj;
 		}
 
 		template<class T, class... Args>
-		inline T *_new_no_throw(Args... args)
+		inline T *_new_no_throw(Args&&... args)
 		{
-			T *obj = new (std::nothrow) T(args...); // May nullptr;
+			T *obj = new (std::nothrow) T(std::forward<Args>(args)...); // May nullptr.
 			if (nullptr == obj)
 				return nullptr;
 			m_size += sizeof(T);
@@ -129,6 +129,7 @@ namespace NETWORK_POOL
 			return obj;
 		}
 
+		// We should use same T to delete or we may get error on memory size trace.
 		template<class T>
 		inline void _delete_set_nullptr(T *& ptr)
 		{

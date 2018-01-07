@@ -23,6 +23,14 @@
 
 #include "np_dbg.h"
 
+/*
+#if !NP_DBG
+	#include <stdio.h>
+	#undef NP_FPRINTF
+	#define NP_FPRINTF(_x) { fprintf _x; }
+#endif
+*/
+
 namespace NETWORK_POOL
 {
 	ChttpTask::ChttpTask(CmemoryTrace& memoryTrace, ChttpServer& server, const CnetworkNode& node)
@@ -46,7 +54,7 @@ namespace NETWORK_POOL
 		CnetworkPool *pool = m_server.getNetworkPool();
 		if (pool != nullptr)
 		{
-			static const std::string resp("HTTP/1.1 200 OK\r\nContent-Length: 600\r\n\r\n"
+			static const std::string resp("HTTP/1.1 200 OK\r\nConnection:Keep-Alive\r\nContent-Length: 600\r\n\r\n"
 				"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
 				"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
 				"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"

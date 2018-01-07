@@ -145,12 +145,22 @@ namespace NETWORK_POOL
 			_again:
 				if (ctx.analysis())
 				{
-					if (ctx.isGood())
+					if (ctx.isGood() && m_pool != nullptr)
 					{
-						ChttpTask *task = new ChttpTask(m_memoryTrace, *this, node);
-						ctx.reinitForNext(task->getContext());
-						m_workQueue.pushTask(task);
-						goto _again;
+						ChttpTask *task = m_memoryTrace._new_no_throw<ChttpTask>(m_memoryTrace, *this, node);
+						if (nullptr == task)
+							m_pool->close(node);
+						else
+						{
+							ctx.reinitForNext(task->getContext());
+							m_workQueue.pushTask(task,
+								[this](Ctask *task)
+							{
+								ChttpTask *httpTask = (ChttpTask *)task; // We should use same T to delete or we may get error on memory size trace.
+								this->m_memoryTrace._delete_set_nullptr<ChttpTask>(httpTask);
+							});
+							goto _again;
+						}
 					}
 					else if (m_pool != nullptr)
 						m_pool->close(node);

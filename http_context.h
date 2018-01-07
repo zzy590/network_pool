@@ -64,7 +64,7 @@ namespace NETWORK_POOL
 
 		void init()
 		{
-			if (0 == m_buffer.getLength())
+			if (0 == m_buffer.getMaxLength()) // Only init at first time.
 			{
 				if (m_maxBufferSize < 0x1000)
 					m_maxBufferSize = 0x1000;
