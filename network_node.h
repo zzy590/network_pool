@@ -314,7 +314,7 @@ namespace NETWORK_POOL
 				ip[0] = 0;
 				break;
 			}
-			return std::string(ip);
+			return std::move(std::string(ip));
 		}
 
 		inline unsigned short getPort() const
@@ -440,30 +440,31 @@ namespace NETWORK_POOL
 	class CnetworkPair
 	{
 	private:
-		CnetworkNode m_local;
-		CnetworkNode m_remote;
+		CnetworkNode::protocol_type m_protocol;
+		Csockaddr m_local;
+		Csockaddr m_remote;
 
 		size_t m_hash;
 
 		inline void rehash()
 		{
-			m_hash = (m_local.getHash() << sizeof(size_t) * 4) + m_remote.getHash();
+			m_hash = m_remote.getHash(m_local.getHash(m_protocol * 31));
 		}
 
 	public:
-		CnetworkPair() :m_hash(0) {} // All zero and hash is 0.
-		CnetworkPair(const CnetworkNode& local, const CnetworkNode& remote)
-			:m_local(local), m_remote(remote) { rehash(); }
-		CnetworkPair(CnetworkNode&& local, const CnetworkNode& remote)
-			:m_local(local), m_remote(remote) { rehash(); }
-		CnetworkPair(const CnetworkNode& local, CnetworkNode&& remote)
-			:m_local(local), m_remote(remote) { rehash(); }
-		CnetworkPair(CnetworkNode&& local, CnetworkNode&& remote)
-			:m_local(local), m_remote(remote) { rehash(); }
+		CnetworkPair() :m_protocol(CnetworkNode::protocol_tcp), m_hash(0) {} // All zero and hash is 0.
+		CnetworkPair(const CnetworkNode::protocol_type protocol, const Csockaddr& local, const Csockaddr& remote)
+			:m_protocol(protocol), m_local(local), m_remote(remote) { rehash(); }
+		CnetworkPair(const CnetworkNode::protocol_type protocol, Csockaddr&& local, const Csockaddr& remote)
+			:m_protocol(protocol), m_local(local), m_remote(remote) { rehash(); }
+		CnetworkPair(const CnetworkNode::protocol_type protocol, const Csockaddr& local, Csockaddr&& remote)
+			:m_protocol(protocol), m_local(local), m_remote(remote) { rehash(); }
+		CnetworkPair(const CnetworkNode::protocol_type protocol, Csockaddr&& local, Csockaddr&& remote)
+			:m_protocol(protocol), m_local(local), m_remote(remote) { rehash(); }
 		CnetworkPair(const CnetworkPair& another)
-			:m_local(another.m_local), m_remote(another.m_remote), m_hash(another.m_hash) {}
+			:m_protocol(another.m_protocol), m_local(another.m_local), m_remote(another.m_remote), m_hash(another.m_hash) {}
 		CnetworkPair(CnetworkPair&& another) // Move is copy, and another.m_hash will not change.
-			:m_local(std::move(another.m_local)), m_remote(std::move(another.m_remote)), m_hash(another.m_hash) {}
+			:m_protocol(another.m_protocol), m_local(std::move(another.m_local)), m_remote(std::move(another.m_remote)), m_hash(another.m_hash) {}
 
 		const CnetworkPair& operator=(const CnetworkPair& another)
 		{
@@ -496,32 +497,41 @@ namespace NETWORK_POOL
 			return !operator==(another);
 		}
 
-		inline void setLocal(const CnetworkNode& local)
+		inline void setProtocol(const CnetworkNode::protocol_type protocol)
+		{
+			m_protocol = protocol;
+			rehash();
+		}
+		inline void setLocal(const Csockaddr& local)
 		{
 			m_local = local;
 			rehash();
 		}
-		inline void setLocal(CnetworkNode&& local)
+		inline void setLocal(Csockaddr&& local)
 		{
 			m_local = local;
 			rehash();
 		}
-		inline void setRemote(const CnetworkNode& remote)
+		inline void setRemote(const Csockaddr& remote)
 		{
 			m_remote = remote;
 			rehash();
 		}
-		inline void setRemote(CnetworkNode&& remote)
+		inline void setRemote(Csockaddr&& remote)
 		{
 			m_remote = remote;
 			rehash();
 		}
 
-		inline const CnetworkNode& getLocal() const
+		inline CnetworkNode::protocol_type getProtocol() const
+		{
+			return m_protocol;
+		}
+		inline const Csockaddr& getLocal() const
 		{
 			return m_local;
 		}
-		inline const CnetworkNode& getRemote() const
+		inline const Csockaddr& getRemote() const
 		{
 			return m_remote;
 		}

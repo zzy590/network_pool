@@ -466,7 +466,7 @@ namespace NETWORK_POOL
 			{
 				const CnetworkNode& node = pair.first;
 				const bool& bForceClose = pair.second;
-				Ctcp *tcp = pool->getStreamByNode(node);
+				Ctcp *tcp = pool->getStreamByNode(node); // Tcp connections(checked before insert).
 				if (tcp != nullptr)
 				{
 					// No force close means shutdown, and it's a type of send.

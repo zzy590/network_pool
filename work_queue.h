@@ -74,7 +74,7 @@ namespace NETWORK_POOL
 			std::function<void(Ctask *)> deleter;
 			while (true)
 			{
-				if (!getNext(task,deleter))
+				if (!getNext(task, deleter))
 					break;
 				task->run();
 				deleter(task);

@@ -234,6 +234,8 @@ namespace NETWORK_POOL
 		// Or close immediately if bForceClose == true.
 		void close(const CnetworkNode& node, const bool bForceClose = false)
 		{
+			if (node.getProtocol() != CnetworkNode::protocol_tcp)
+				return; // Only tcp can close.
 			auto&& pair = std::make_pair(node, bForceClose);
 			{
 				std::lock_guard<std::mutex> guard(m_lock); // Use guard in case of exception.

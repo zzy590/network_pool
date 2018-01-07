@@ -22,8 +22,13 @@
 #pragma once
 
 #include <atomic>
+#include <cstdlib>
 
 #include "np_dbg.h"
+
+#if NP_DBG
+	#include <cstring>
+#endif
 
 namespace NETWORK_POOL
 {
@@ -61,9 +66,11 @@ namespace NETWORK_POOL
 			if (allocSize < sz) // In case of overflow.
 			{
 				NP_FPRINTF((stderr, "malloc_throw size overflow.\n"));
-				throw(-1);
+				std::terminate();
 			}
-			void *ptr = new unsigned char[allocSize]; // May throw.
+			void *ptr = malloc(allocSize);
+			if (nullptr == ptr)
+				throw std::bad_alloc();
 			*(size_t *)ptr = allocSize;
 			m_size += allocSize;
 			++m_count;
@@ -79,9 +86,9 @@ namespace NETWORK_POOL
 			if (allocSize < sz) // In case of overflow.
 			{
 				NP_FPRINTF((stderr, "malloc_no_throw size overflow.\n"));
-				throw(-1);
+				std::terminate();
 			}
-			void *ptr = new (std::nothrow) unsigned char[allocSize]; // May nullptr.
+			void *ptr = malloc(allocSize);
 			if (nullptr == ptr)
 				return nullptr;
 			*(size_t *)ptr = allocSize;
@@ -105,40 +112,57 @@ namespace NETWORK_POOL
 		#if NP_DBG
 			memset(org, -1, allocSize);
 		#endif
-			delete[](unsigned char *)org;
+			free(org);
 			ptr = nullptr;
 		}
 
 		template<class T, class... Args>
 		inline T *_new_throw(Args&&... args)
 		{
-			T *obj = new T(std::forward<Args>(args)...); // May throw.
-			m_size += sizeof(T);
-			++m_count;
-			return obj;
+			T *ptr = (T *)_malloc_throw(sizeof(T));
+			try
+			{
+				return new (ptr)T(std::forward<Args>(args)...);
+			}
+			catch (...)
+			{
+				_free_set_nullptr(ptr);
+				throw;
+			}
 		}
 
 		template<class T, class... Args>
 		inline T *_new_no_throw(Args&&... args)
 		{
-			T *obj = new (std::nothrow) T(std::forward<Args>(args)...); // May nullptr.
-			if (nullptr == obj)
+			T *ptr = (T *)_malloc_no_throw(sizeof(T));
+			if (nullptr == ptr)
 				return nullptr;
-			m_size += sizeof(T);
-			++m_count;
-			return obj;
+			try
+			{
+				return new (ptr)T(std::forward<Args>(args)...);
+			}
+			catch (...)
+			{
+				_free_set_nullptr(ptr);
+				throw; // Still throw when constructor throw.
+			}
 		}
 
-		// We should use same T to delete or we may get error on memory size trace.
 		template<class T>
 		inline void _delete_set_nullptr(T *& ptr)
 		{
 			if (nullptr == ptr)
 				return;
-			delete ptr;
-			m_size -= sizeof(T);
-			--m_count;
-			ptr = nullptr;
+			try
+			{
+				ptr->~T();
+				_free_set_nullptr(ptr);
+			}
+			catch (...)
+			{
+				_free_set_nullptr(ptr);
+				throw;
+			}
 		}
 	};
 }

@@ -158,8 +158,7 @@ namespace NETWORK_POOL
 							m_workQueue.pushTask(task,
 								[this](Ctask *task)
 							{
-								ChttpTask *httpTask = (ChttpTask *)task; // We should use same T to delete or we may get error on memory size trace.
-								this->m_memoryTrace._delete_set_nullptr<ChttpTask>(httpTask);
+								this->m_memoryTrace._delete_set_nullptr(task);
 							});
 							goto _again;
 						}
