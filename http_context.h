@@ -88,7 +88,7 @@ namespace NETWORK_POOL
 		}
 
 		#ifndef _MSC_VER
-			#define _strnicmp strcasencmp
+			#define _strnicmp strncasecmp
 		#endif
 
 		void kvDecoder(const char *name, const size_t nameLength, const char *value, const size_t valueLength)
@@ -145,7 +145,7 @@ namespace NETWORK_POOL
 
 	public:
 		ChttpContext(CmemoryTrace& memoryTrace, const size_t maxBufferSize = 0x1000000) // 16MB
-			:m_buffer(&memoryTrace), m_maxBufferSize(maxBufferSize) {}
+			:m_maxBufferSize(maxBufferSize), m_buffer(&memoryTrace) {}
 
 		void prepareBuffer(void *& buffer, size_t& length)
 		{

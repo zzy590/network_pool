@@ -108,7 +108,8 @@ namespace NETWORK_POOL
 		void deleteReferenceTask(ChttpTask *task)
 		{
 			std::lock_guard<std::mutex> guard(m_taskLock);
-			for (auto it = m_tasks.lower_bound(task->getNode()); it != m_tasks.upper_bound(task->getNode()); ++it)
+			auto range = m_tasks.equal_range(task->getNode());
+			for (auto it = range.first; it != range.second; ++it)
 			{
 				if (it->second == task)
 				{
