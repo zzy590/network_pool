@@ -122,7 +122,8 @@ namespace NETWORK_POOL
 		void cancelTask(const CnetworkNode& node)
 		{
 			std::lock_guard<std::mutex> guard(m_taskLock);
-			for (auto it = m_tasks.lower_bound(node); it != m_tasks.upper_bound(node); ++it)
+			auto range = m_tasks.equal_range(node);
+			for (auto it = range.first; it != range.second; ++it)
 				it->second->cancel();
 		}
 
