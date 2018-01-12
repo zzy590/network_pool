@@ -567,7 +567,6 @@ namespace NETWORK_POOL
 				break;
 
 				case CnetworkNode::protocol_udp:
-				{
 					if (pool->m_udpServers.size() > 0)
 					{
 						CnetworkPool::__udp_send_with_info *udpSendInfo = (CnetworkPool::__udp_send_with_info *)pool->getMemoryTrace()._malloc_no_throw(sizeof(CnetworkPool::__udp_send_with_info)); // Only one buf.
@@ -581,19 +580,19 @@ namespace NETWORK_POOL
 							Cudp *sender = pool->m_udpServers[selIndex];
 							if (uv_udp_send(&udpSendInfo->udpSend, sender->getUdp(), udpSendInfo->buf, (unsigned int)udpSendInfo->num, node.getSockaddr().getSockaddr(), on_udp_send_done) != 0)
 							{
+								// Send fail.
 								// Free udp send buffer.
 								for (size_t i = 0; i < udpSendInfo->num; ++i)
 									pool->getMemoryTrace()._free_set_nullptr(udpSendInfo->buf[i].base);
 								pool->getMemoryTrace()._free_set_nullptr(udpSendInfo);
 								// Stop and close server.
 								pool->m_udpServers.erase(pool->m_udpServers.begin() + selIndex);
-								pool->m_callback.bindStatus(node, false);
+								pool->m_callback.bindStatus(sender->getNode(), false); // Caution, here is the local port.
 								uv_udp_recv_stop(sender->getUdp()); // Ignore the result.
 								Cudp::close_set_nullptr(sender);
 							}
 						}
 					} // Ignore the fail, and udp don't send drop.
-				}
 				break;
 
 				default:
