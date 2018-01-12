@@ -63,6 +63,8 @@ namespace NETWORK_POOL
 		unsigned int tcp_connect_timeout_in_seconds;
 		unsigned int tcp_idle_timeout_in_seconds;
 		unsigned int tcp_send_timeout_in_seconds;
+		// Udp settings.
+		int udp_ttl;
 
 		__preferred_network_settings()
 		{
@@ -76,6 +78,7 @@ namespace NETWORK_POOL
 			tcp_connect_timeout_in_seconds = 10;
 			tcp_idle_timeout_in_seconds = 30;
 			tcp_send_timeout_in_seconds = 30;
+			udp_ttl = 64;
 		}
 	};
 
@@ -85,6 +88,12 @@ namespace NETWORK_POOL
 		struct __write_with_info
 		{
 			uv_write_t write;
+			size_t num;
+			uv_buf_t buf[1]; // Need free when complete request.
+		};
+		struct __udp_send_with_info
+		{
+			uv_udp_send_t udpSend;
 			size_t num;
 			uv_buf_t buf[1]; // Need free when complete request.
 		};
@@ -158,6 +167,9 @@ namespace NETWORK_POOL
 		friend void on_tcp_write_done(uv_write_t *req, int status);
 		friend void on_new_connection(uv_stream_t *server, int status);
 		friend void on_connect_done(uv_connect_t *req, int status);
+		friend void udp_alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf);
+		friend void on_udp_recv(uv_udp_t *handle, ssize_t nread, const uv_buf_t *buf, const struct sockaddr *addr, unsigned flags);
+		friend void on_udp_send_done(uv_udp_send_t *req, int status);
 		friend void on_wakeup(uv_async_t *async);
 
 		inline Ctcp *getStreamByNode(const CnetworkNode& node);
@@ -170,6 +182,8 @@ namespace NETWORK_POOL
 		//          Following function(s) may set nullptr to tcp.
 		inline void startupTcpConnection_may_set_nullptr(Ctcp *& tcp);
 		inline void shutdownTcpConnection_set_nullptr(Ctcp *& tcp, bool bAlwaysNotify = false, bool bShutdown = false);
+		// Udp stop, close and cleanup.
+		inline void stopAndCloseUdp_set_nullptr(Cudp *& udp);
 
 		void internalThread();
 
@@ -218,6 +232,7 @@ namespace NETWORK_POOL
 			uv_async_send(m_wakeup->getAsync());
 		}
 
+		// Binding a udp port is needed before sending a udp packet.
 		void send(const CnetworkNode& node, const void *data, const size_t length, const bool bAutoConnect = false)
 		{
 			if (0 == length || nullptr == data)

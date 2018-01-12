@@ -189,6 +189,12 @@ namespace NETWORK_POOL
 	// Cudp
 	//
 
+	static inline bool setUdp(uv_udp_t *udp, const __preferred_network_settings& settings)
+	{
+		uv_udp_set_ttl(udp, settings.udp_ttl); // It's just prefer, so ignore the return.
+		return true;
+	}
+
 	Cudp *Cudp::alloc(CnetworkPool *pool, uv_loop_t *loop)
 	{
 		Cudp *udp = pool->getMemoryTrace()._new_no_throw<Cudp>();
@@ -203,6 +209,11 @@ namespace NETWORK_POOL
 			return nullptr;
 		}
 		udp->m_inited = true;
+		if (!setUdp(&udp->m_udp, pool->getSettings()))
+		{
+			close_set_nullptr(udp);
+			return nullptr;
+		}
 		return udp;
 	}
 
