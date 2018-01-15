@@ -100,7 +100,7 @@ namespace NETWORK_POOL
 		if (status != 0)
 		{
 			NP_FPRINTF((stderr, "Tcp write error %s.\n", uv_strerror(status)));
-			// Drop message notify.
+			// Notify the message drop.
 			for (size_t i = 0; i < writeInfo->num; ++i)
 				pool->m_callback.drop(tcp->getNode(), writeInfo->buf[i].base, writeInfo->buf[i].len);
 			// Shutdown connection.
@@ -121,14 +121,8 @@ namespace NETWORK_POOL
 		{
 			// WTF? Listen fail?
 			NP_FPRINTF((stderr, "Tcp listen error %s.\n", uv_strerror(status)));
-			// Report this error and close the server.
-			Ctcp *serverTcp = Ctcp::obtain(server);
-			// Clean set.
-			auto sz = pool->m_tcpServers.erase(serverTcp->getNode());
-			if (sz > 0)
-				pool->m_callback.bindStatus(serverTcp->getNode(), false);// Report bind down.
-			// Close.
-			Ctcp::close_set_nullptr(serverTcp);
+			// Just report this error.
+			pool->m_callback.tcpListenError(Ctcp::obtain(server)->getNode(), status);
 			return;
 		}
 		// Prepare for the new connection.
@@ -277,8 +271,8 @@ namespace NETWORK_POOL
 		{
 			pool->m_callback.deallocateMemoryForMessage(udp->getNode(), buf->base, buf->len);
 			NP_FPRINTF((stderr, "Recv udp error %s.\n", uv_err_name((int)nread)));
-			// Stop and close udp.
-			pool->stopAndCloseUdp_set_nullptr(udp);
+			// Just report this error.
+			pool->m_callback.udpRecvError(udp->getNode(), (int)nread);
 		}
 		else if (addr != nullptr)
 		{
@@ -298,9 +292,9 @@ namespace NETWORK_POOL
 		if (status != 0)
 		{
 			NP_FPRINTF((stderr, "Udp write error %s.\n", uv_strerror(status)));
-			// Udp don't have drop message notify.
-			// Shutdown connection.
-			pool->stopAndCloseUdp_set_nullptr(udp);
+			// Udp don't have drop message notification.
+			// Just report this error.
+			pool->m_callback.udpSendError(udp->getNode(), status);
 		}
 		// Free udp send buffer.
 		for (size_t i = 0; i < udpSendInfo->num; ++i)
@@ -575,24 +569,21 @@ namespace NETWORK_POOL
 							udpSendInfo->num = 1;
 							data.transfer(udpSendInfo->buf[0]);
 							pool->m_udpIndex %= pool->m_udpServers.size();
-							size_t selIndex = pool->m_udpIndex;
+							Cudp *sender = pool->m_udpServers[pool->m_udpIndex];
 							++pool->m_udpIndex;
-							Cudp *sender = pool->m_udpServers[selIndex];
-							if (uv_udp_send(&udpSendInfo->udpSend, sender->getUdp(), udpSendInfo->buf, (unsigned int)udpSendInfo->num, node.getSockaddr().getSockaddr(), on_udp_send_done) != 0)
+							int iRet = uv_udp_send(&udpSendInfo->udpSend, sender->getUdp(), udpSendInfo->buf, (unsigned int)udpSendInfo->num, node.getSockaddr().getSockaddr(), on_udp_send_done);
+							if (iRet != 0)
 							{
 								// Send fail.
 								// Free udp send buffer.
 								for (size_t i = 0; i < udpSendInfo->num; ++i)
 									pool->getMemoryTrace()._free_set_nullptr(udpSendInfo->buf[i].base);
 								pool->getMemoryTrace()._free_set_nullptr(udpSendInfo);
-								// Stop and close server.
-								pool->m_udpServers.erase(pool->m_udpServers.begin() + selIndex);
-								pool->m_callback.bindStatus(sender->getNode(), false); // Caution, here is the local port.
-								uv_udp_recv_stop(sender->getUdp()); // Ignore the result.
-								Cudp::close_set_nullptr(sender);
+								// Just report this error.
+								pool->m_callback.udpSendError(sender->getNode(), iRet);
 							}
 						}
-					} // Ignore the fail, and udp don't send drop.
+					} // Ignore the fail, and udp don't send drop notification.
 				break;
 
 				default:
@@ -730,32 +721,13 @@ namespace NETWORK_POOL
 		auto sz = m_node2stream.erase(tcp->getNode());
 		if (sz > 0 || bAlwaysNotify)
 			m_callback.connectionStatus(tcp->getNode(), false); // Report connection down.
-		// Drop message notify.
+		// Notify the message drop.
 		dropWaiting(tcp->getNode());
 		// Close connection.
 		if (bShutdown)
 			Ctcp::shutdown_and_close_set_nullptr(tcp);
 		else
 			Ctcp::close_set_nullptr(tcp);
-	}
-
-	inline void CnetworkPool::stopAndCloseUdp_set_nullptr(Cudp *& udp)
-	{
-		// Find in vector.
-		bool bFound = false;
-		for (auto it = m_udpServers.begin(); it != m_udpServers.end(); ++it)
-		{
-			if (*it == udp)
-			{
-				m_udpServers.erase(it);
-				bFound = true;
-				break;
-			}
-		}
-		if (bFound)
-			m_callback.bindStatus(udp->getNode(), false); // Notify.
-		uv_udp_recv_stop(udp->getUdp()); // Ignore the result.
-		Cudp::close_set_nullptr(udp);
 	}
 
 	void CnetworkPool::internalThread()

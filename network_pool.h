@@ -182,8 +182,6 @@ namespace NETWORK_POOL
 		//          Following function(s) may set nullptr to tcp.
 		inline void startupTcpConnection_may_set_nullptr(Ctcp *& tcp);
 		inline void shutdownTcpConnection_set_nullptr(Ctcp *& tcp, bool bAlwaysNotify = false, bool bShutdown = false);
-		// Udp stop, close and cleanup.
-		inline void stopAndCloseUdp_set_nullptr(Cudp *& udp);
 
 		void internalThread();
 

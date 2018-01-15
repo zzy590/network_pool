@@ -40,14 +40,22 @@ namespace NETWORK_POOL
 		virtual void message(const CnetworkNode& node, const void *data, const size_t length) = 0;
 
 		// Message which want to send will be dropped.
-		// Note: Drop before connection down notify means failed to send(maybe other reasons),
-		//       and drop after connection down notify means failed by the down of the connection.
+		// Note: Drop before connection down notification means failed to send(maybe other reasons),
+		//       and drop after connection down notification means failed by the down of the connection.
 		virtual void drop(const CnetworkNode& node, const void *data, const size_t length) = 0;
 
-		// Local bind notify.
+		// Local bind notification.
 		virtual void bindStatus(const CnetworkNode& node, const bool bSuccess) = 0;
-		// Remote connection notify.
-		// Note: No connection down notify if you send a message without auto connect when there is no connection established.
+		// Remote connection notification.
+		// Note: No connection down notification if you send a message without auto connect when there is no connection established.
 		virtual void connectionStatus(const CnetworkNode& node, const bool bSuccess) = 0;
+
+		// Error notifications of binded port.
+		// Note: Error on tcp connection will cause connection down.
+		//       But error on udp and tcp listening socket will send following notifications.
+		//       Node is the local binded port.
+		virtual void tcpListenError(const CnetworkNode& node, int err) {}
+		virtual void udpSendError(const CnetworkNode& node, int err) {}
+		virtual void udpRecvError(const CnetworkNode& node, int err) {}
 	};
 }
