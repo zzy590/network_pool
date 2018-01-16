@@ -27,6 +27,8 @@
 
 #include "uv.h"
 
+#include "fast_allocator.h"
+
 namespace NETWORK_POOL
 {
 	class Csockaddr
@@ -343,7 +345,7 @@ namespace NETWORK_POOL
 		}
 	};
 
-	class CnetworkNode
+	class CnetworkNode : public CfastAllocator<CnetworkNode>
 	{
 	public:
 		enum protocol_type

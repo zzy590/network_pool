@@ -24,6 +24,7 @@
 #include <atomic>
 #include <cstdlib>
 
+#include "fast_allocator.h"
 #include "np_dbg.h"
 
 #if NP_DBG
@@ -68,7 +69,7 @@ namespace NETWORK_POOL
 				NP_FPRINTF((stderr, "malloc_throw size overflow.\n"));
 				std::terminate();
 			}
-			void *ptr = malloc(allocSize);
+			void *ptr = __alloc(allocSize);
 			if (nullptr == ptr)
 				throw std::bad_alloc();
 			*(size_t *)ptr = allocSize;
@@ -88,7 +89,7 @@ namespace NETWORK_POOL
 				NP_FPRINTF((stderr, "malloc_no_throw size overflow.\n"));
 				std::terminate();
 			}
-			void *ptr = malloc(allocSize);
+			void *ptr = __alloc(allocSize);
 			if (nullptr == ptr)
 				return nullptr;
 			*(size_t *)ptr = allocSize;
@@ -112,7 +113,7 @@ namespace NETWORK_POOL
 		#if NP_DBG
 			memset(org, -1, allocSize);
 		#endif
-			free(org);
+			__free(org, allocSize);
 			ptr = nullptr;
 		}
 

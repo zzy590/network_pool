@@ -25,11 +25,12 @@
 
 #include "uv.h"
 
+#include "fast_allocator.h"
 #include "memory_trace.h"
 
 namespace NETWORK_POOL
 {
-	class Cbuffer
+	class Cbuffer : public CfastAllocator<Cbuffer>
 	{
 	private:
 		CmemoryTrace *m_trace; // May change by move operation, so use pointer.

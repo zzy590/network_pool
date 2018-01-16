@@ -84,7 +84,7 @@ namespace NETWORK_POOL
 
 	class CnetworkPool
 	{
-	private:
+	public:
 		struct __write_with_info
 		{
 			uv_write_t write;
@@ -98,6 +98,7 @@ namespace NETWORK_POOL
 			uv_buf_t buf[1]; // Need free when complete request.
 		};
 
+	private:
 		// Status of internal thread.
 		volatile enum __internal_state
 		{
@@ -234,6 +235,8 @@ namespace NETWORK_POOL
 		void send(const CnetworkNode& node, const void *data, const size_t length, const bool bAutoConnect = false)
 		{
 			if (0 == length || nullptr == data)
+				return;
+			if (CnetworkNode::protocol_udp == node.getProtocol() && length > 65507)
 				return;
 			__pending_send temp(m_memoryTrace, node, data, length, bAutoConnect);
 			{
