@@ -20,6 +20,7 @@
  */
 
 #include <mutex>
+#include <thread>
 #include <cstdlib>
 
 #include "uv.h"
@@ -40,85 +41,46 @@
 
 namespace NETWORK_POOL
 {
-	// Check.
-	#define C_ASSERT(e) typedef char __C_ASSERT__[(e)?1:-1]
-	C_ASSERT(sizeof(uv_shutdown_t) == sizeof(uv_connect_t));
+	static const size_t s_maxAllocatorSlot = 4096;
+	#define set_max_store_number(_s, _n) { if ((_s) < s_maxAllocatorSlot) s_maxAllocatorStoreNumber[(_s)] = (_n); }
 
 	static std::mutex s_globalLock;
-	enum __allocator_index
-	{
-		unknown_index = 0,             // Ignore this slot.
-		network_node_index,            // sizeof(CnetworkNode)
-		buffer_index,                  // sizeof(Cbuffer)
-		uv_connect_shutdown_index,     // sizeof(uv_shutdown_t) + sizeof(size_t) == sizeof(uv_connect_t) + sizeof(size_t) Check before.
-		tcp_write_index,               // sizeof(CnetworkPool::__write_with_info) + sizeof(size_t)
-		udp_send_index,                // sizeof(CnetworkPool::__udp_send_with_info) + sizeof(size_t)
-		casync_index,                  // sizeof(Casync) + sizeof(size_t)
-		ctcp_index,                    // sizeof(Ctcp) + sizeof(size_t)
-		cudp_index,                    // sizeof(Cudp) + sizeof(size_t)
-		allocator_index_max
-	};
-	static void *s_allocatorStore[allocator_index_max] = { 0 };
-	static size_t s_allocatorStoreCount[allocator_index_max] = { 0 };
-	static const size_t s_maxStoreNumber[allocator_index_max] = {
-		0,
-		512,
-		512,
-		1024,
-		4096,
-		4096,
-		0,
-		16384,
-		0
-	};
+	static void *s_allocatorStore[s_maxAllocatorSlot] = { 0 };
+	static size_t s_allocatorStoreCount[s_maxAllocatorSlot] = { 0 };
+	static size_t s_maxAllocatorStoreNumber[s_maxAllocatorSlot] = { 0 };
 
-	static inline __allocator_index size2index(std::size_t size)
+	static std::once_flag s_storeNumberInit;
+
+	static inline void initStoreNumber()
 	{
-		switch (size)
+		std::call_once(s_storeNumberInit, []()
 		{
-		case sizeof(CnetworkNode):
-			return network_node_index;
-
-		case sizeof(Cbuffer):
-			return buffer_index;
-
-		case sizeof(uv_connect_t) + sizeof(size_t) :
-			return uv_connect_shutdown_index;
-
-		case sizeof(CnetworkPool::__write_with_info) + sizeof(size_t):
-			return tcp_write_index;
-
-		case sizeof(CnetworkPool::__udp_send_with_info) + sizeof(size_t):
-			return udp_send_index;
-
-		case sizeof(Casync) + sizeof(size_t):
-			return casync_index;
-
-		case sizeof(Ctcp) + sizeof(size_t):
-			return ctcp_index;
-
-		case sizeof(Cudp) + sizeof(size_t):
-			return cudp_index;
-
-		default:
-			return unknown_index;
-		}
+			set_max_store_number(sizeof(CnetworkNode), 512);
+			set_max_store_number(sizeof(Cbuffer), 512);
+			set_max_store_number(sizeof(uv_shutdown_t) + sizeof(size_t), 1024);
+			set_max_store_number(sizeof(uv_connect_t) + sizeof(size_t), 1024);
+			set_max_store_number(sizeof(CnetworkPool::__write_with_info) + sizeof(size_t), 4096);
+			set_max_store_number(sizeof(CnetworkPool::__udp_send_with_info) + sizeof(size_t), 4096);
+			set_max_store_number(sizeof(Casync) + sizeof(size_t), 0);
+			set_max_store_number(sizeof(Ctcp) + sizeof(size_t), 16384);
+			set_max_store_number(sizeof(Cudp) + sizeof(size_t), 0);
+		});
 	}
 
 	void *__alloc(std::size_t size)
 	{
+		initStoreNumber();
 		FA_FPRINTF((stderr, "fa alloc %u.\n", size));
-		__allocator_index index = size2index(size);
-		if (unknown_index == index)
+		if (size >= s_maxAllocatorSlot || 0 == s_maxAllocatorStoreNumber[size])
 			return malloc(size);
 		FA_FPRINTF((stderr, "fa use store.\n"));
 		void *take = nullptr;
 		s_globalLock.lock();
-		if (s_allocatorStore[index] != nullptr)
+		if (s_allocatorStore[size] != nullptr)
 		{
-			take = s_allocatorStore[index];
-			s_allocatorStore[index] = *(void **)take;
-			--s_allocatorStoreCount[index];
+			take = s_allocatorStore[size];
+			s_allocatorStore[size] = *(void **)take;
+			--s_allocatorStoreCount[size];
 		}
 		s_globalLock.unlock();
 		if (nullptr == take)
@@ -131,16 +93,15 @@ namespace NETWORK_POOL
 		if (nullptr == ptr)
 			return;
 		FA_FPRINTF((stderr, "fa free %u.\n", size));
-		__allocator_index index = size2index(size);
-		if (unknown_index == index)
+		if (size >= s_maxAllocatorSlot || 0 == s_maxAllocatorStoreNumber[size])
 			return free(ptr);
 		FA_FPRINTF((stderr, "fa use store.\n"));
 		s_globalLock.lock();
-		if (s_allocatorStoreCount[index] < s_maxStoreNumber[index])
+		if (s_allocatorStoreCount[size] < s_maxAllocatorStoreNumber[size])
 		{
-			*(void **)ptr = s_allocatorStore[index];
-			s_allocatorStore[index] = ptr;
-			++s_allocatorStoreCount[index];
+			*(void **)ptr = s_allocatorStore[size];
+			s_allocatorStore[size] = ptr;
+			++s_allocatorStoreCount[size];
 			ptr = nullptr;
 		}
 		s_globalLock.unlock();
